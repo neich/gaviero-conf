@@ -1,0 +1,49 @@
+# Personal skills repo — track only skill sources (SKILL.md, references/, scripts/).
+
+# --- Python artifacts from skill scripts ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node artifacts (if a skill script ever uses JS) ---
+node_modules/
+
+# --- Dropbox sync artifacts (folder lives inside Dropbox) ---
+.dropbox
+.dropbox.attr
+.dropbox.cache/
+*conflicted copy*
+*Conflicted copy*
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+desktop.ini
+Icon?
+
+# --- Editor / IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Scratch, logs and run output ---
+*.log
+*.tmp
+*.bak
+tmp/
+out/
+output/
+
+# --- Never commit credentials (skills live next to gaviero's secrets) ---
+.env
+.env.*
+*.pem
+*.key
+secrets.toml
+token

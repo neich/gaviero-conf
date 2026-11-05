@@ -1,0 +1,64 @@
+{
+  "$comment": "Copy of the schema owned by the finish-stage skill; keep identical.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "manifest",
+  "description": "Machine-readable summary a stage writes next to its report.md. The explainer builds its step plan from `highlights`.",
+  "type": "object",
+  "required": ["stage", "title", "goal", "metrics", "artifacts", "highlights"],
+  "additionalProperties": false,
+  "properties": {
+    "stage": { "type": "string" },
+    "title": { "type": "string" },
+    "brief": { "type": "string", "description": "The user's finish brief, verbatim: what the stage was about and which files were read." },
+    "goal": { "type": "string", "description": "One or two sentences: what this stage set out to establish." },
+    "summary": { "type": "string", "description": "What came out, in plain words." },
+    "metrics": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["id", "value", "source"], "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "value": { "type": ["number", "string"] },
+          "unit": { "type": "string" },
+          "source": { "type": "string", "description": "File (relative to the stage dir) where the value can be found." },
+          "meaning": { "type": "string", "description": "What the number tells you; include the budget/threshold it is compared against if any." },
+          "budget": { "type": ["number", "string"], "description": "Threshold or target the metric is judged against." }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["file", "role"], "additionalProperties": false,
+        "properties": {
+          "file": { "type": "string" },
+          "role": { "type": "string", "description": "What the file contains and what it is for, e.g. 'table scenarios: per-scenario wall-clock'." },
+          "columns": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Column/field → meaning (and unit) for tabular data." }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["id", "text"], "additionalProperties": false,
+        "properties": { "id": { "type": "string" }, "text": { "type": "string" }, "because": { "type": "string" }, "metrics": { "type": "array", "items": { "type": "string" } } }
+      }
+    },
+    "highlights": {
+      "type": "array", "minItems": 1,
+      "description": "The 3–6 things worth explaining, in narrative order. Each becomes one explainer step.",
+      "items": {
+        "type": "object", "required": ["id", "text"], "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "text": { "type": "string", "description": "The point, in one sentence." },
+          "why": { "type": "string", "description": "Why it matters for the next stage." },
+          "metrics": { "type": "array", "items": { "type": "string" }, "description": "metric ids involved" },
+          "artifacts": { "type": "array", "items": { "type": "string" }, "description": "files to draw from" }
+        }
+      }
+    },
+    "open_issues": { "type": "array", "items": { "type": "string" } }
+  }
+}

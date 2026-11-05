@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "explainer",
+  "description": "Plain-language content layer for one stage. Contains no rendering information.",
+  "type": "object",
+  "required": ["stage", "title", "brief", "sources", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "stage": { "type": "string", "description": "Stage identifier as the project names it, e.g. F1-step3." },
+    "title": { "type": "string" },
+    "brief": { "type": "string", "description": "The user's request, verbatim. Values stated in it count as sourced (source: \"brief\")." },
+    "summary": { "type": "string", "description": "Two or three sentences: what was done and why it matters." },
+    "sources": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "required": ["file"], "additionalProperties": false,
+        "properties": {
+          "file": { "type": "string", "description": "Path relative to the output dir, normally data/<name>." },
+          "from": { "type": "string", "description": "Original path the file was copied from." },
+          "note": { "type": "string", "description": "What to use it for, as the brief said (e.g. 'table scenarios: per-scenario timings')." }
+        }
+      },
+      "description": "Files named in the brief, copied under the output dir. The gate builds its allowed-value set from these plus the brief."
+    },
+    "steps": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "caption"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "caption": { "type": "string", "description": "What this step shows, in simple language." },
+          "why": { "type": "string", "description": "Why this step was done / why it matters, if not obvious from the caption." },
+          "claims": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["text", "value", "source"],
+              "additionalProperties": false,
+              "properties": {
+                "text": { "type": "string" },
+                "value": { "type": ["number", "string"] },
+                "source": { "type": "string", "description": "The `file` of one entry in sources, or \"brief\"." },
+                "derived": { "type": "boolean", "description": "true if the value is computed from source data rather than present in it; the gate then skips the lookup." }
+              }
+            }
+          },
+          "data": { "type": "array", "items": { "type": "string" }, "description": "Files the visuals of this step read." }
+        }
+      }
+    }
+  }
+}
