@@ -1,0 +1,30 @@
+# Cross-platform (Linux + Windows) line-ending policy.
+# Everything text is stored AND checked out as LF on every OS, regardless of
+# each machine's core.autocrlf. LF is required for the #! shebangs in
+# */scripts/*.py to work on Linux, and every Windows editor handles LF fine.
+* text=auto eol=lf
+
+# Explicit text types (belt and braces for auto-detection)
+*.md     text eol=lf
+*.json   text eol=lf
+*.py     text eol=lf
+*.sh     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.toml   text eol=lf
+LICENSE  text eol=lf
+
+# Windows-only scripts must stay CRLF
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+*.ps1    text eol=crlf
+
+# Binary assets: never touch
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.pdf    binary
+*.zip    binary
+*.gz     binary
