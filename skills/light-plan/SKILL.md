@@ -27,10 +27,11 @@ Read the code involved first, then choose:
 
 Milestones are the exception. Never use them to divide one goal into phases or to fit a large task under the step limit. If any step of one goal depends on another goal's result, it is one dependency graph: treat it as a single goal.
 
-## 2. Settle doubts in one round
+## 2. Settle doubts
 
 - Verify everything you can before writing the plan: paths, signatures, conventions, library APIs.
-- Ask only what changes the outcome and that you cannot verify. Ask once, with all questions together, each carrying your recommended answer.
+- Ask only what changes the outcome and that you cannot verify. By default, ask once, with all questions together, each carrying your recommended answer.
+- Interview instead when an open decision has other decisions depending on it, or when the user asks to be grilled: walk the design tree, settling the root decisions first and then their dependents, one branch at a time, each question with your recommended answer. Explore the codebase instead of asking whenever it can answer. Stop when every branch is resolved, then state the decisions in a short summary before writing the plan.
 - Anything smaller becomes a labeled assumption in the plan, with what would confirm it. Do not ask about it.
 
 ## 3. Write the plan

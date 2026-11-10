@@ -9,10 +9,24 @@ The user's prompt gives the goal. Produce a plan a frontier AI model can execute
 
 ## 1. Resolve every doubt before writing
 
-- Ask the user about anything you cannot verify yourself. Ask as many questions as needed.
-- Ask in rounds grouped by dependency; each question carries your recommended answer. Later rounds build on earlier answers.
-- Do not draft the plan until no open question remains. An unresolved doubt in the plan becomes a guess during execution.
+- Interview the user about anything you cannot verify yourself, relentlessly, until you share an understanding of every decision the plan needs. Ask as many questions as needed.
+- Walk the design tree: settle the root decisions first, then the decisions that depend on them, one branch at a time. Batch questions only when their answers are independent of each other; later questions build on earlier answers.
+- Each question carries your recommended answer.
+- If the codebase or the tools under "Verification resources" can answer a question, explore instead of asking.
+- Do not draft the plan until every branch is resolved. Then summarise the decisions in a few lines and have the user confirm the summary. An unresolved doubt in the plan becomes a guess during execution.
 - Verify facts before they enter the plan: read the repo for paths, signatures, conventions; check installed versions/docs for APIs. Anything you can't verify becomes a question, not an assumption.
+
+### Verification resources
+
+Verify with tools before asking the user: every fact checked is one question fewer. Use only tools that are actually in your tool list, and never assume one exists.
+
+- **Repo:** gaviero `repo_outline` and `node_doc` for structure and signatures; `symbol_refs` for callers and callees; `blast_radius` for what a change affects and which tests cover it. Use them to write non-goals and to pick the commands for self-checks. Use `memory_search` for earlier decisions and gotchas, and treat its results as leads to confirm in the code.
+- **Libraries:** find the installed version in the lockfile or manifest. Then read the API at that version: context7 (`resolve-library-id`, then `query-docs`), or the installed source (`node_modules`, site-packages, `~/.cargo/registry`, vendored code). Never pin a version or an API from memory.
+- **Known issues:** WebSearch and WebFetch for deprecations, breaking changes and open bugs in the pinned versions (changelogs, release notes, issue trackers). A claim counts only if you opened the page; a search snippet is a lead. Never put secrets or private code in a search query.
+- **Large repos:** before drafting, you may launch read-only explorer subagents in parallel, one per area, to gather facts. This is plan authoring; the no-parallel-agents rule in the execution model applies to execution only. Open each fact an explorer reports yourself before it enters the plan.
+- **Literature:** if a milestone depends on what published research says, run `/deep-research` first and have the plan cite its report. Don't research the literature inside this skill.
+
+The verification is done when every path, identifier, version and API in the plan was read in this session; everything else is a question for the user.
 
 ## 2. Write for the AI executor
 
@@ -66,7 +80,7 @@ plans/<plan-name>/<plan-name>-v<N>.md
   and add 1. Never overwrite or delete earlier versions. Start the new version
   with a `Supersedes: <plan-name>-v<N-1>.md` line and a short summary of what
   changed.
-- Tell the user the exact path you wrote.
+- Tell the user the exact path you wrote, and that `/execute-plan <path>` runs it.
 
 The plan uses this shape:
 
@@ -97,7 +111,10 @@ On pass: log checkpoint `M1` in the progress log
 ## Final gate
 
 ## Progress log
+
+Status: Not started
+
 <!-- Executor appends: step done, gate results with evidence, checkpoints, failure report. A fresh session resumes from the last passed gate. -->
 ```
 
-Executor instructions at the top of the file: run steps in order, one at a time, in the current working directory; run each self-check; spawn the gate evaluator at each gate and wait for its result; log everything; never skip a gate; never create worktrees or run git write commands.
+Executor instructions at the top of the file: run with `/execute-plan <this file's path>`; run steps in order, one at a time, in the current working directory; run each self-check; spawn the gate evaluator at each gate and wait for its result; log everything; never skip a gate; never create worktrees or run git write commands.

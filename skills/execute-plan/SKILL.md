@@ -1,93 +1,103 @@
 ---
 name: execute-plan
-description: Execute a long, multi-phase or multi-stage implementation plan autonomously, start to finish, without pausing between steps to ask permission. Use whenever the user hands over a structured plan (phases, stages, milestones, a roadmap doc) and asks Claude to build it, implement it, "just run it," or execute it end-to-end. Small deviations from the plan (missing details, outdated references, minor conflicts) get resolved with the strongest reasonable default and logged, not escalated. Execution only stops for genuine hard blocks — missing access, irreversible actions, or choices only the user can make. Produces a plan_log.md recording every deviation and how it was resolved.
+description: Execute a plan autonomously, start to finish, without pausing to ask permission. Built for plans written by gated-plan (plans/<name>/<name>-v<N>.md, with steps, self-checks, independent gates and a Progress log); also runs other structured plans such as PLAN.md, a roadmap doc or a pasted plan. Resolves small deviations with the strongest default and logs them; stops only at hard stops, failed gates or genuine blocks; resumes from the last passed checkpoint. Use when the user asks to execute, run or implement a plan end-to-end, or invokes /execute-plan.
+argument-hint: "[plan path | plan name]"
 ---
 
 # Execute Plan
 
-The user wants autonomous execution of a plan. Treat "check in before each phase" as a failure mode, not caution. The value of this skill is finishing the whole plan in one continuous run and handing back a clean record of what happened, not a string of "should I proceed?" messages.
+Run the whole plan in one continuous run and hand back a clean record. Asking before each step is a failure mode, not caution. Don't narrate progress in chat: the log holds it.
 
-## Inputs
+## 1. Find the plan
 
-- **Plan file:** the user should point you at the file containing the plan (e.g. "execute the plan at docs/rollout-plan.md"). If they pasted the plan inline or attached it instead of naming a path, use that directly.
-- **Versioned plans.** Plans are normally stored as `plans/<plan-name>/<plan-name>-v<N>.md`, which is what `gated-plan` writes. The latest version of a plan is the file with the highest `N`, compared as a number (so `-v10` beats `-v9`). Resolve what the user refers to like this:
-  - A specific file (e.g. `plans/auth-token-refresh/auth-token-refresh-v2.md`): use exactly that file. If a newer version exists, still run the named one, and note in the log that a newer version exists.
-  - A plan name (e.g. "execute auth-token-refresh") or its folder: use the latest version in `plans/<plan-name>/`.
-- If no plan is referenced at all, look in `plans/*/` first:
-  - Exactly one plan folder: use its latest version.
-  - Several plan folders: ask which plan.
-  - No `plans/` folder: look for an older-style candidate in the working directory (`PLAN.md`, `plan.md`, `IMPLEMENTATION_PLAN.md`, `ROADMAP.md`, or similar). If several candidates exist, or none do, ask which file.
+Plans written by `gated-plan` live at `plans/<plan-name>/<plan-name>-v<N>.md`. The latest version has the highest `N`, compared as a number (`-v10` beats `-v9`).
 
-  In all these cases, ask before doing anything else. This is the one point where confirming first is worth it, since starting on the wrong plan wastes the entire run.
-- **Log file.** For a versioned plan, the log is `plan_log-v<N>.md` in the plan's folder, matching the version being run. Logs from earlier versions are left alone. For any other plan, the log is `plan_log.md` next to the plan file. Wherever this skill says `plan_log.md`, it means this file.
-- If that log already exists and its `Status` says `Blocked at Phase X`, treat this as a resume: pick up from that phase instead of starting over. A log from a different version is never a resume point. A new version starts fresh.
+- **A file path:** run exactly that file. If a newer version exists, still run the named one and note it in the log.
+- **A plan name or its folder:** run the latest version in `plans/<plan-name>/`.
+- **A plan pasted or attached in chat:** use it directly.
+- **Nothing named:** look in `plans/*/`. One plan folder: run its latest version. Several: ask which. No `plans/` folder: look for `PLAN.md`, `plan.md`, `IMPLEMENTATION_PLAN.md`, `ROADMAP.md` or similar; if there are several candidates or none, ask which.
 
-## Before starting
+When you have to ask, ask before doing anything else: starting on the wrong plan wastes the run.
 
-Read the entire plan first, not just the current phase — later phases often depend on choices made early on, and you want to know that before phase 1. Then create the log file (see Inputs; at the project root if the location isn't obvious) with the plan's path, including its version, and a phase list, and update it as you go — not just at the end. If the session is interrupted, the log should still reflect real progress.
+Then read the whole plan before acting, and classify it:
+- **Gated plan:** it has a `## Progress log` and gate sections (`### Gate M<n>`, `## Final gate`). Follow section 3.
+- **Other plan:** anything else. Follow section 4.
 
-## Version control: hands off
+## 2. Precedence
 
-The user handles all branching and commits manually. Work directly in the current working tree and leave every change uncommitted.
+The plan file wins over this skill. Its executor instructions, execution model, `## Hard stops`, gates, retry limits and failure handling apply as written; this skill fills only what the plan leaves out. Where the plan is silent, the defaults below apply.
 
-- Never create or switch into a git worktree: no `git worktree`, no `EnterWorktree`, no `isolation: "worktree"` on subagents.
-- Never run git commands that change repository state: no `branch`, `checkout`, `switch`, `add`, `commit`, `stash`, `reset`, `restore`, `merge`, `rebase`, `cherry-pick`, `tag`, `pull`, `push`, and no PRs (`gh pr ...`). Read-only inspection (`git status`, `git diff`, `git log`) is fine.
-- If the plan includes a git step (e.g. "create a branch", "commit after phase 2", "open a PR"), skip it, don't treat it as a hard block, and log it in `plan_log.md` as `Skipped — git left to user`, saying where a commit or branch boundary would naturally go.
+## 3. Gated plans
 
-## The execution loop
+**Log.** Log only in the plan's own `## Progress log`. Never create a separate log file: a strict plan's hard stops may forbid it. Keep a `Status:` line at the top of the log (add it if missing) with one of `Not started`, `In progress`, `Blocked at <step>`, `Failed at <gate>`, `Complete`. Each version of a plan is its own file with its own log; a new version starts fresh.
 
-For each phase/stage, in order:
+**Start or resume.** Read the log first.
+- No entries: set `Status: In progress`, log the start date and the file run, and begin at the first step.
+- Checkpoints, or `Blocked at <step>`: confirm the files still match the last checkpoint (`git status`, `git diff --stat`, and the files that checkpoint lists). Then continue from the step after the last passed checkpoint, or from the blocked step. If the files don't match, that is a hard block.
+- `Failed at <gate>`: resume only if the user asks. Then re-run that gate with a fresh retry budget.
+- `Complete`: report that and do nothing.
+- A failed plan review recorded by `gated-plan-strict`: hard block. Don't execute an unreviewed plan.
 
-1. Execute it fully.
-2. If something doesn't match the plan exactly, classify it (below), resolve it, log it if it was a real deviation, and continue immediately — no need to narrate the decision to the user mid-flight, it's in the log.
-3. If it's a hard block, stop there (see below).
+**Steps.** For each step, in order:
+1. If the plan has `## Hard stops`, check the step against them. On a match, don't act: write a stop report (step, condition hit, what is needed to continue), set `Status: Blocked at <step>`, and end the run.
+2. Make the change.
+3. Run the step's self-check. On failure, read the actual error before changing anything, then fix and re-run, up to 2 attempts. Still failing: hard block.
+4. Log one line with the self-check's actual result.
 
-## Simple deviation vs. hard block
+**Gates.** At each gate, spawn a fresh agent. Never evaluate a gate yourself, and never skip one. Give the agent only the plan file path, the gate's name and read access to the working directory. Never give it your transcript or reasoning. Tell it:
 
-The dividing line is: **is there a low-risk default a competent engineer would confidently pick, or does this require a judgment call that belongs to the user?**
+> Evaluate `<gate>` in `<plan path>`. Re-run every check yourself and trust no claim in the progress log. Do not modify files or run git write commands. Return PASS or FAIL per criterion with the command output or `path:line` behind it, mark anything you could not check as NOT RUN, and end with an overall PASS or FAIL.
 
-**Simple deviation — resolve with the strongest recommendation and keep going:**
-- The plan references a file, function, API, or dependency that doesn't exist under that exact name, but an obvious equivalent does
-- A parameter, config value, or detail is underspecified, and any reasonable choice satisfies what the phase is actually trying to accomplish
-- A step fails because an assumption in the plan is stale (e.g., a library version, a schema shape), and the fix is a straightforward adaptation, not a redesign
-- Two sub-steps could be reordered or merged without changing the outcome
-- Typos, missing boilerplate, or naming mismatches the plan clearly implies
+Wait for the result.
+- **PASS:** log a checkpoint: the gate, its evidence, and the files changed since the last checkpoint.
+- **FAIL:** fix what failed and re-submit to a new fresh agent, up to the gate's `Max retries` (default 2). Still failing: write a failure report (criterion, evidence, attempts), set `Status: Failed at <gate>`, and stop. A crossed hard stop fails with no retry.
 
-**Hard block — stop and ask:**
-- Multiple reasonable interpretations would lead to materially different outcomes, and picking wrong is costly or awkward to undo
-- Required credentials, access, or external resources are missing with no substitute
-- The plan contradicts itself, or contradicts the existing codebase/environment, in a way that isn't a simple typo
-- The next step is destructive or irreversible (deleting data, dropping a table, spending real money) and the plan doesn't clearly authorize it
-- Continuing would mean making a scope, budget, or priority call that's the user's to make, not the agent's
+After the final gate passes, set `Status: Complete`.
 
-When a hard block hits: stop, record it in `plan_log.md` as unresolved, and report the blocker plus exactly what's needed to clear it. If other, genuinely independent phases remain, note that they could proceed in parallel, but don't restructure the plan's order on your own judgment — confirm first.
+## 4. Other plans
 
-## plan_log.md format
+**Log.** Append a `## Progress log` section with a `Status:` line to the plan file. If the plan was pasted, write `plan_log.md` in the working directory instead.
 
-Keep entries short and skip phases with nothing to report:
+**Steps.** Treat each phase, stage or numbered item as a step, in order. Run any check the plan gives. Where it gives none, choose a concrete check (a command and its expected result, a test, an observable), run it, and log it as your own choice. Same 2-attempt limit as section 3. There are no gates unless the plan defines them; if it does, run them as in section 3.
 
-```markdown
-# Plan Execution Log
+At the end, re-run every check against the final state before setting `Status: Complete`.
 
-**Plan:** <path, e.g. plans/auth-token-refresh/auth-token-refresh-v2.md>
-**Started:** <date>
-**Status:** In progress / Complete / Blocked at Phase X
+## 5. Deviations and hard blocks
 
-## Phase 1: <name>
+The test: is there a low-risk default a competent engineer would confidently pick, or is this a call that belongs to the user? Anything the plan's hard stops cover is never a simple deviation.
+
+**Simple deviation:** take the strongest default, log it, and continue.
+- A file, function, API or dependency has a different name than the plan says, and the equivalent is obvious.
+- A detail is underspecified and any reasonable choice meets the step's goal.
+- A step fails because the plan's assumption is stale, and the fix is a straightforward adaptation, not a redesign.
+- Two sub-steps can be reordered or merged without changing the outcome.
+- Typos, missing boilerplate, or naming mismatches the plan clearly implies.
+
+**Hard block:** stop, set `Status: Blocked at <step>`, log the blocker and what is needed, and report it.
+- Interpretations differ materially and a wrong pick is costly to undo.
+- Credentials, access or external resources are missing with no substitute.
+- The plan contradicts itself or the codebase in a way that isn't a typo.
+- The next step is destructive or irreversible and the plan doesn't authorize it.
+- Continuing would mean a scope, budget or priority call that is the user's to make.
+
+If independent steps remain after a block, say they could proceed, but don't reorder the plan without the user's confirmation.
+
+Log a deviation as:
+
+```
 - Deviation: <what didn't match the plan>
-- Resolution: <what you did instead>
-- Why: <one line>
-
-## Phase 2: <name>
-No deviations.
-
-## Phase 3: <name> — BLOCKED
-- Blocker: <what stopped execution>
-- Needed: <what input or decision would unblock it>
+  Resolution: <what you did instead>
+  Why: <one line>
 ```
 
-## Tone
+## 6. Versions
 
-Don't ask for confirmation before each phase, file, or command. Don't stop to summarize progress unless you've hit a hard block or finished the whole plan. Brief status is fine in `plan_log.md`; it doesn't need to be repeated to the user in chat until there's something they actually need to act on.
+Use the versions the plan pins. Use context7 (if available) or the installed source only to read the API at that version. Never upgrade or swap a pinned dependency on your own; if a pinned version can't be used, that is a hard block unless the plan allows a change.
 
-Use MCP server contetx7 (if available) to get the most current version of libraries and artifacts used in the plan.
+## 7. Git
+
+The user handles branches and commits. Work in the current working tree and leave every change uncommitted. Never create or enter a worktree: no `git worktree`, no `EnterWorktree`, no `isolation: "worktree"` on subagents. Never run git commands that change state: `branch`, `checkout`, `switch`, `add`, `commit`, `stash`, `reset`, `restore`, `merge`, `rebase`, `cherry-pick`, `tag`, `pull`, `push`, or PRs. Read-only git (`git status`, `git diff`, `git log`) is fine. If the plan has a git step, skip it and log `Skipped — git left to user`, saying where a commit would naturally go.
+
+## 8. Report
+
+Report in chat only when the run ends: finished, blocked, or failed at a gate. Give the plan path and the final status; each gate's result with its key evidence; the deviations the user should review; and, if stopped, exactly what is needed to continue.
