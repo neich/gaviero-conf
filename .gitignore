@@ -1,4 +1,14 @@
-# Personal skills repo — track only skill sources (SKILL.md, references/, scripts/).
+# Personal gaviero repo: tracks only skills/ and dsl/ plus these root files.
+# This folder is GAVIERO_ROOT/.gaviero and also holds secrets, databases and
+# run history, so everything is ignored unless explicitly allowed below.
+
+/*
+!/.gitignore
+!/.gitattributes
+!/.editorconfig
+!/LICENSE
+!/skills/
+!/dsl/
 
 # --- Python artifacts from skill scripts ---
 __pycache__/

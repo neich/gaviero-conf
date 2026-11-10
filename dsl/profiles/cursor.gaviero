@@ -1,0 +1,12 @@
+// Model profile: every tier on Cursor.
+//
+// Cursor takes no `effort`: the level is part of the model id, so check
+// `agent --list-models` before inventing suffixes.
+
+client composer { model "cursor:composer-2.5"  privacy public }
+client grok     { model "cursor:grok-4.7-high" privacy public }
+
+tier low    composer
+tier medium composer
+tier high   composer
+tier top    grok

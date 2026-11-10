@@ -1,0 +1,82 @@
+// MCP smoke test — verify an external MCP server works on a model profile.
+//
+// Runs one tiny probe on the `low` tier of the chosen profile. The probe is told
+// to call ONE read-only tool on the operator-supplied MCP server and write a
+// verdict file `{{OUT_DIR}}/{{PROBE_ID}}.probe` whose FIRST LINE is exactly:
+//     MCP_OK     — a tool call to the server returned a real response
+//     MCP_FAIL   — unreachable / errored / no tools / could not call it
+//
+// Why a verdict file instead of the run's exit code: gaviero-cli only exits
+// non-zero on backend/validation failures. Codex marks user `--mcp-url`/
+// `--mcp-stdio` servers `required = true`, so `codex exec` hard-fails by itself
+// when the server is unreachable — but Claude and Cursor just finish the turn
+// and report the problem in prose. The companion wrapper `mcp_smoke_test.sh`
+// turns these verdict files into a hard pass/fail and stops on the first FAIL.
+//
+// `execution_mode document` — no git worktrees, no merge, no repo-map. Point
+// `--workspace` at a scratch dir; the probes write their verdicts there.
+//
+// The `--mcp-url` NAME must equal `--var MCP_SERVER=...` so the prompt names the
+// right server. Use `--mcp-stdio NAME=cmd,arg1,...` instead for a local server.
+//
+// Usage (let the wrapper do it for you):
+//   gaviero-cli --script mcp-smoke-test.gaviero --profile claude \
+//     --workspace /tmp/mcp-smoke --var OUT_DIR=. --var MCP_SERVER=my-server \
+//     --var PROBE_ID=probe_claude \
+//     --mcp-url my-server=https://YOUR-ENDPOINT/ \
+//     --mcp-codex-trust granted
+//
+// To check several providers, run once per profile; the wrapper does this and
+// stops at the first failure. The probe stays on tier `low` because it only
+// checks connectivity.
+
+vars {
+    OUT_DIR    "."
+    MCP_SERVER "probe-mcp"
+    // Name of the verdict file; the wrapper sets one per profile.
+    PROBE_ID   "probe"
+    // What each probe should do. Override per server's tool surface, e.g.
+    //   --var PROBE_TASK="Call search_papers with query \"attention\", limit 1."
+    PROBE_TASK "List the tools this server exposes, then call exactly one safe, read-only tool with a minimal argument and capture its raw response."
+}
+
+// ── Probe prompt ─────────────────────────────────────────────────────────────
+
+prompt probe-body #"
+    You are a connectivity probe. Your ONLY job is to confirm that the MCP
+    server named `{{MCP_SERVER}}` is reachable and answers a tool call from
+    THIS client. Do not edit code, do not explore the workspace, do not call
+    any other server.
+
+    Steps:
+      1. Target the MCP server named `{{MCP_SERVER}}`.
+      2. {{PROBE_TASK}}
+      3. Write your verdict to `{{OUT_DIR}}/{{PROBE_ID}}.probe` (create it once):
+           - The VERY FIRST LINE must be exactly `MCP_OK` if an actual tool
+             call to `{{MCP_SERVER}}` returned a real response, or exactly
+             `MCP_FAIL` if the server was unreachable, returned an error,
+             exposed no tools, or you could not call it for any reason.
+           - Below the first line, record: the tool you called, the arguments,
+             and the raw response or the exact error text.
+
+    Never write `MCP_OK` unless a real tool call to `{{MCP_SERVER}}` actually
+    succeeded. If you are unsure or had to guess, the verdict is `MCP_FAIL`.
+"#
+
+// ── Probe agent ──────────────────────────────────────────────────────────────
+
+agent probe {
+    description "MCP probe: {{MCP_SERVER}}"
+    tier low
+    scope { owned ["{{OUT_DIR}}/{{PROBE_ID}}.probe"] }
+    prompt probe-body
+    max_retries 0
+}
+
+// ── Workflow ─────────────────────────────────────────────────────────────────
+
+workflow mcp-smoke-test {
+    execution_mode document
+    steps [probe]
+    max_parallel 1
+}

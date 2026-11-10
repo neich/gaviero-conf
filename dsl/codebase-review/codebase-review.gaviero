@@ -1,0 +1,356 @@
+// Template: Critical codebase review (findings only — does not apply edits)
+//
+// Shape:
+//
+//   inventory        (medium)  — discovers modules, writes inventory.md
+//     ↓
+//   loop {
+//     review_module  (high)    — findings for module {{ITER}}
+//     until agent halt_judge   — medium: ITER >= MODULE_COUNT, or STOP?
+//     max_iterations 24
+//   }
+//     ↓
+//   synthesize       (medium)  — rolls up every review-N.md into summary.md
+//
+// Review, not apply. Findings are the deliverable. A later, human-gated
+// workflow can apply them; this script must not mutate src/ or tests/.
+//
+// Why a loop rather than one giant review:
+//   Module count is unknown at compile time. One high-tier turn per module
+//   keeps context on that module's entry points instead of stuffing the
+//   whole repo into a single prompt.
+//
+// Why sequential (max_parallel 1), not stacked:
+//   max_parallel 1 runs agents on the shared checkout — worktrees only
+//   engage when max_parallel > 1. Sequential lets review N read
+//   review-1.md … review-(N-1).md for cross-module duplication. There
+//   is no source mutation, so branch_chain stacked is neither needed
+//   nor compatible with max_parallel 1.
+//
+// Halt:
+//   halt_judge (medium) reads MODULE_COUNT / VERDICT from inventory.md
+//   and exits when this iteration covered the last module, or when
+//   inventory STOPped. Same pattern as phased-plan.gaviero. No HALTED
+//   token, no git-show probe, no extra high-tier burn after the last module.
+//
+// Output contract:
+//   Each writer declares `produces` so a turn that narrates a file it
+//   never wrote is Failed, not Completed. {{ITER}} in produces is
+//   substituted per pass.
+//
+// Models: two workflow params — `reviewer` (tier high) and `judge`
+// (tier medium: inventory, halt_judge, synthesize). The profile chosen for
+// the run says what each tier means; `--param` moves a role to another tier.
+//
+//   gaviero-cli --script $GAVIERO_ROOT/.gaviero/dsl/codebase-review/codebase-review.gaviero \
+//     --profile claude --var OUT_DIR=reviews/claude
+//   gaviero-cli --script $GAVIERO_ROOT/.gaviero/dsl/codebase-review/codebase-review.gaviero \
+//     --profile codex --param reviewer=tier:top --var OUT_DIR=reviews/codex
+
+vars {
+    OUT_DIR "reviews/latest"
+}
+
+// ── Prompts ──────────────────────────────────────────────────────────────────
+
+prompt inventory-body #"
+    You are producing a structured inventory of a repository for a
+    downstream critical-review pipeline. You do not review code in depth
+    here — you name modules and how they fit together.
+
+    STEP 1 — discover modules.
+      Identify every distinct module/library/crate/app in the workspace.
+      Use the most reliable signal for this language (Cargo workspace
+      members, package.json workspaces, top-level apps/ + libs/, etc.).
+      Do NOT include vendored, generated, or third-party code (target/,
+      dist/, node_modules/, .gaviero/, etc.).
+
+    STEP 2 — order the modules from leaf to root.
+      The review loop runs modules in the order you list them. Put
+      foundational/shared modules first (libraries with no internal deps),
+      then their consumers, then top-level apps. Later reviews read
+      earlier review-N.md files; leaf-first means shared-API findings
+      exist before consumers are reviewed.
+
+    STEP 3 — write {{OUT_DIR}}/inventory.md with this exact structure:
+
+        # Repository inventory
+
+        MODULE_COUNT: <integer>
+
+        ## Module 1 — <name>
+        Path: <relative path from repo root>
+        Purpose: <one paragraph, inferred from code + README>
+        Languages: <e.g. Rust, TypeScript>
+        Internal deps: <list of other module names this one imports from>
+        Key entry points: <file paths>
+
+        ## Module 2 — <name>
+        ...
+
+        (repeat for every module, in leaf-to-root order)
+
+        ## Global assessment
+        - Architecture: how do these modules fit together? Dependency direction?
+          Cycles or layering violations?
+        - Boundaries: are public APIs between modules well-defined, or do
+          modules reach into each other's internals?
+        - Cross-cutting concerns: logging, error handling, config — consistent
+          across modules or fragmented?
+        - Hot spots: which modules are doing the most? Which look stale?
+
+        VERDICT: PROCEED
+
+    The `MODULE_COUNT` line is parsed by the runtime (and by halt_judge)
+    — be exact. Write this file at the exact path {{OUT_DIR}}/inventory.md
+    (already substituted). Do not write a sibling directory such as
+    reviews/latest/ unless that is the substituted path. Each module
+    heading must be `## Module <N> — <name>`, numbered from 1.
+    Always emit MODULE_COUNT, including when you STOP (use 0).
+
+    You MUST create that file with the Write tool (or Edit). Printing the
+    markdown only in the assistant message does not count — the runtime
+    checks that the path exists on disk. Do not wrap the body in a
+    `<file>` tag unless you also Write the file.
+
+    If the repo isn't reviewable in this shape (no recognisable modules,
+    workspace is empty, etc.), replace the final line with:
+        VERDICT: STOP: <one paragraph explaining why>
+"#
+
+prompt review-body #"
+    You are reviewing module {{ITER}} of this repository. You produce
+    findings. You do not edit source, tests, config, or lockfiles.
+
+    STEP 0 — skip if there is no module for this iteration.
+      Read {{OUT_DIR}}/inventory.md (exact substituted path). If it does
+      not exist, look for a sibling `latest/inventory.md` only to decide
+      skip-vs-review — then still write this iteration's file under
+      {{OUT_DIR}}/.
+      If its last line is `VERDICT: STOP: …`, or if {{ITER}} > MODULE_COUNT,
+      write {{OUT_DIR}}/review-{{ITER}}.md as:
+
+          # Review — Module {{ITER}} — skipped
+          Reason: <inventory STOP quote, or module count exceeded>
+
+      and exit. halt_judge owns loop termination; this file only satisfies
+      the output contract.
+
+    STEP 1 — locate your module.
+      From {{OUT_DIR}}/inventory.md, read the section headed
+      `## Module {{ITER}} — …`. That is your subject.
+
+    STEP 2 — prior reviews (if {{ITER}} > 1).
+      Read {{OUT_DIR}}/review-k.md for each k in 1..{{ITER}}-1.
+      Skip any that are themselves skipped. Use them to:
+        - Avoid restating a finding already filed against an earlier module.
+        - Flag duplication / API mismatch this module shares with an earlier one
+          (cite the earlier F-id).
+        - Note cross-module impact that the earlier review predicted.
+
+    STEP 3 — analyse THIS module.
+      Do not read every source file. Start from the inventory's key entry
+      points, then pull only what you need via blast_radius, node_doc,
+      repo_outline, symbol_search, and symbol_doc. Cite file:line.
+      Length / field-count checklists are not findings.
+
+      Form a critical opinion on:
+      - **Antipatterns**: god objects, mutable global state, hidden
+        dependencies, leaky abstractions, copy-paste proliferation.
+      - **Simplification**: types that do too many things, dead code, dead
+        config, dead deps.
+      - **Duplication**: the same idea implemented twice in this module, or
+        vs an earlier module already reviewed.
+      - **Overcomplexity**: control flow or types that hide the actual
+        invariant, not merely "this file is long".
+      - **Test gaps**: public-API or cross-module workflows with no
+        integration coverage. Propose tests; do not write them.
+
+    STEP 4 — write {{OUT_DIR}}/review-{{ITER}}.md with this exact structure:
+
+        # Review — Module {{ITER}} — <name>
+
+        ## Findings
+        For each finding:
+
+            ### F<N>: <short title>
+            Severity: critical | high | medium | low
+            Category: antipattern | simplification | duplication | overcomplexity | test-gap
+            Location: <file:line[-line]>
+            Problem: <2-3 sentences>
+            Proposed change: <concrete edit or test, which files, roughly how>
+            Risk: <1 sentence — what could break if someone later applies this>
+            Cross-module: <downstream modules / earlier F-ids; empty if local>
+
+        ## Skipped (judgment calls)
+        Issues you considered but will not flag — one line each, with reason.
+
+    Be terse and specific. Vague suggestions ("clean up error handling")
+    are not findings.
+"#
+
+prompt judge-body #"
+    You decide whether the review loop is complete. Cheap: read two facts,
+    emit a verdict. Do not review code.
+
+    The runtime also parses MODULE_COUNT from inventory.md and may halt
+    without calling you. If you do run, your fenced JSON must appear in
+    the assistant text — never inside <turn_annotations> (that sidecar
+    is stripped before the verdict parser runs).
+
+    {{ITER_EVIDENCE}}
+
+    Read {{OUT_DIR}}/inventory.md — parse `MODULE_COUNT: <N>` and the last
+    `VERDICT:` line. If that path does not exist, do not invent a skip
+    essay: still emit the JSON verdict from whatever inventory you can
+    find (or FAIL if you cannot parse MODULE_COUNT).
+
+    Return PASS (loop exits) when ANY of:
+      1. Iteration {{ITER}} >= MODULE_COUNT. The last listed module was
+         reviewed this pass (or MODULE_COUNT is 0).
+      2. Inventory ends with `VERDICT: STOP: …`. There is nothing to review.
+
+    Return FAIL (loop continues) when inventory is `VERDICT: PROCEED` and
+    {{ITER}} < MODULE_COUNT — the next iteration should review module
+    {{ITER}}+1.
+
+    Output format — your entire reply should be exactly one fenced JSON
+    object (no sidecar):
+
+    ```json
+    {"verdict": "pass" | "fail", "reason": "<one short paragraph>"}
+    ```
+"#
+
+prompt synthesize-body #"
+    You are rolling up a completed (or halted) per-module review into one
+    summary. You do not edit source or tests.
+
+    Read:
+      - {{OUT_DIR}}/inventory.md
+      - Every {{OUT_DIR}}/review-*.md (skip any whose heading is skipped)
+
+    Write {{OUT_DIR}}/summary.md with:
+      - Modules reviewed vs skipped, and why skipped if any.
+      - Findings by severity (counts, then the critical/high list with
+        module + F-id + location).
+      - Cross-module themes (duplication, layering, API leaks) that span
+        more than one review.
+      - Test-gap proposals worth a follow-up (do not write tests).
+      - Recommended apply order IF someone later applies these findings
+        (leaf to root; call out findings that block others).
+
+    End with one of:
+
+        VERDICT: COMPLETE — every inventoried module was reviewed
+        VERDICT: PARTIAL — <which modules were skipped + why>
+        VERDICT: STOPPED — <inventory STOP reason>
+"#
+
+// ── Agents ───────────────────────────────────────────────────────────────────
+
+// Explicit `tools` overrides workspace `agent.availableTools`. An empty
+// list would inherit Bash (and AskUserQuestion / Agent / …), which
+// bypasses Write Gate scope checks. MCP tools are not in this list —
+// they arrive through synthesized `.mcp.json`, not `--tools`.
+agent inventory {
+    description "Inventory modules in leaf-to-root order"
+    client judge
+    tools ["WebSearch" "WebFetch"]
+    scope {
+        owned     ["{{OUT_DIR}}/inventory.md"]
+        read_only ["src/" "crates/" "Cargo.toml" "package.json" "README.md" "ARCHITECTURE.md" "CLAUDE.md"]
+    }
+    produces ["{{OUT_DIR}}/inventory.md"]
+    prompt inventory-body
+    max_retries 1
+
+    memory {
+        read_ns    ["architecture" "review-history"]
+        read_query "repository structure and module boundaries"
+        read_limit 10
+    }
+}
+
+agent review_module {
+    description "Review module {{ITER}} — findings only, no edits"
+    client reviewer
+    tools ["WebSearch" "WebFetch"]
+    depends_on [inventory]
+    scope {
+        owned     ["{{OUT_DIR}}/review-*.md"]
+        read_only ["{{OUT_DIR}}/" "src/" "crates/" "tests/" "Cargo.toml" "ARCHITECTURE.md" "CLAUDE.md"]
+    }
+    produces ["{{OUT_DIR}}/review-{{ITER}}.md"]
+    prompt review-body
+    max_retries 2
+}
+
+agent halt_judge {
+    description "Exit the review loop when MODULE_COUNT is covered or inventory STOP"
+    client judge
+    tools ["WebSearch" "WebFetch"]
+    scope {
+        read_only ["{{OUT_DIR}}/"]
+    }
+    prompt judge-body
+}
+
+agent synthesize {
+    description "Roll up per-module reviews into one summary"
+    client judge
+    tools ["WebSearch" "WebFetch"]
+    // depends_on a loop body agent — post-loop dispatch waits until the
+    // loop has finished every iteration, so synthesize sees every
+    // review-N.md (not the pre-loop empty state).
+    depends_on [review_module]
+    scope {
+        owned     ["{{OUT_DIR}}/summary.md"]
+        read_only ["{{OUT_DIR}}/"]
+    }
+    produces ["{{OUT_DIR}}/summary.md"]
+    prompt synthesize-body
+    max_retries 1
+
+    memory {
+        write_ns      "review-history"
+        importance    0.9
+        write_content #"
+            Codebase review (findings only) — summary: {{OUT_DIR}}/summary.md
+        "#
+        staleness_sources ["src/" "crates/"]
+    }
+}
+
+// ── Workflow ─────────────────────────────────────────────────────────────────
+//
+// max_iterations 24 is a safety cap. halt_judge exits when {{ITER}}
+// covers MODULE_COUNT (or inventory STOPs). Raise the cap only if a
+// repo genuinely has more modules than that.
+//
+// stability 1: the judge is reading a counter, not a vibes verdict.
+// No compile/clippy/test verify — this workflow writes markdown only.
+
+workflow codebase_review {
+    param reviewer { model "tier:high" }
+    param judge { model "tier:medium" }
+    steps [
+        inventory
+        loop {
+            agents         [review_module]
+            iter_start     1
+            max_iterations 24
+            stability      1
+            judge_timeout  60
+            strict_judge   true
+            until agent    halt_judge
+        }
+        synthesize
+    ]
+    max_parallel 1
+
+    memory {
+        read_ns  ["architecture" "review-history"]
+        write_ns "review-history"
+    }
+}

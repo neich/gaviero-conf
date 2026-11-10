@@ -1,0 +1,13 @@
+// Model profile: every tier on Claude.
+//
+//   gaviero-cli --script <script>.gaviero --profile claude
+
+client haiku  { model "claude:haiku"  privacy public effort low }
+client sonnet { model "claude:sonnet" privacy public effort medium }
+client opus   { model "claude:opus"   privacy public effort high }
+client fable  { model "claude:fable"  privacy public effort max }
+
+tier low    haiku
+tier medium sonnet
+tier high   opus
+tier top    fable

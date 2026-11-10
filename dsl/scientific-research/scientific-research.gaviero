@@ -1,0 +1,1050 @@
+// Template: iterative scientific-research consensus with a variable
+// roster of providers. One panel shape, two uses:
+//
+//   - de-novo research: the anchor file is a *problem statement*
+//     (data references, prior results, constraints, success criteria);
+//   - research-plan refinement: the anchor file is a *draft research
+//     plan* whose hypotheses, methodology, evidence bars, milestones,
+//     and stopping rules the panel strengthens.
+//
+// This file supersedes scientific_plan_refinement.gaviero — the prompts
+// tell reviewers to detect which kind of anchor they were given; the
+// artefact contract is identical either way.
+//
+// Shape:
+//
+//   Phase 1 (parallel, one per reviewer): each reviewer reads the
+//     anchor document ({{PLAN_FILE}}) plus any optional local material
+//     under {{DATA_DIR}} / {{LOCAL_LIT_DIR}}, performs extensive
+//     independent literature research (Consensus MCP and/or web
+//     tools — see "Research channels"), and writes (a) a standalone
+//     conclusion document carrying its own bibliography and (b) a
+//     production summary. Reviewers do NOT read each other's work in
+//     this phase — the point is an independent baseline.
+//
+//   Phase 2 (loop up to 10): each reviewer reads every peer's prior
+//     conclusion + summary, performs ADDITIONAL targeted literature
+//     research, and writes a new conclusion and a new production
+//     summary. After each pass `convergence-judge`
+//     (tier medium) classifies the iteration; the loop exits on PASS after
+//     `stability` consecutive passes, or hits `max_iterations 10`.
+//
+// Execution mode:
+//
+//   `execution_mode document` — one shared working directory, no git
+//   worktrees, no branch merge, no repo-map. This is load-bearing, not
+//   a preference: refine agents read every peer's prior conclusion
+//   and summary, and worktrees are merged only *after* the
+//   loop exits. Under the default `repo` mode each reviewer would see
+//   an empty {{OUT_DIR}}/ and every refine pass would silently degrade
+//   to a solo pass with no error raised.
+//
+//   Parallelism is unaffected: each reviewer's `owned` globs are
+//   prefixed with its own {{REVIEWER_ID}}, so the scope enforcer keeps
+//   concurrent writes disjoint. Never drop that id prefix.
+//
+// Anchor precedence:
+//
+//   {{PLAN_FILE}} is the run's ONLY source of truth. It alone fixes
+//   what the panel studies.
+//
+//   `--prompt` ({{PROMPT}}) is a run label: a short human-readable
+//   string for logs, agent descriptions, and memory entries. It has
+//   no authority. When the label and the anchor appear to name
+//   different subjects, the anchor wins — every prompt in this file
+//   says so explicitly, because a reviewer left to resolve it alone
+//   will not resolve it the same way as its peers.
+//
+//   That is not hypothetical. A run whose label was a CS-education
+//   topic and whose anchor was a software feature brief produced two
+//   conclusions about two different subjects: one reviewer read the
+//   label as authoritative (on the ground that the anchor asked for
+//   an implementation roadmap these rules forbid), the other read the
+//   anchor as authoritative and forced it into the nearest permitted
+//   category. Both diagnosed the mismatch correctly; neither could
+//   converge with the other, because they were not studying the same
+//   thing. Two frontier iterations went into arguing about which CLI
+//   argument wins.
+//
+//   An anchor the panel cannot use is a reportable defect, never a
+//   licence to substitute a subject. Reviewers name the defect in
+//   their summary's `## Problems found` and analyse what the anchor
+//   does name; the judge returns `irreconcilable` with
+//   `criterion: framing` the first time it sees a split subject or an
+//   unusable anchor, so the run stops after one iteration with an
+//   actionable hand-off instead of burning the panel's budget.
+//
+//   Practical consequence: pick the anchor first and let the label
+//   describe it. A software-engineering brief (implementation plan,
+//   PR decomposition, module ownership) is not a valid anchor for
+//   this workflow at all — its Hard rules forbid producing that
+//   artefact. Use a plan-refinement workflow for those.
+//
+// Anchoring (two ways to run — omit `--repo` in both):
+//
+//   With `--workspace <dir>` (research layout): {{PLAN_FILE}} and
+//   {{OUT_DIR}} are relative to that directory; artefacts collect
+//   under {{OUT_DIR}} (default `research/`).
+//
+//   With `--var PLAN_FILE=/abs/path.md` and no `--workspace`
+//   (plan-refinement layout): gaviero-cli special-cases the PLAN_FILE
+//   var name — it anchors the workspace to the plan's folder and
+//   defaults OUT_DIR there, so the versioned panel artefacts land
+//   alongside the plan. Pass `--var OUT_DIR=...` to redirect them.
+//
+// Research channels:
+//
+//   Reviewers prefer the operator-configured Consensus MCP
+//   server (id {{CONSENSUS_SERVER}}) when one is available and
+//   use WebSearch/WebFetch when ENABLE_WEB_FALLBACK=true (the default)
+//   or when no MCP server is configured. Set
+//   `--var ENABLE_WEB_FALLBACK=false` for an MCP-only panel; a
+//   reviewer left without any working channel must say so in its
+//   summary and rely on local material.
+//
+//   Configure the MCP server any one of these ways:
+//     --mcp-url consensus=URL
+//     --var CONSENSUS_MCP_URL=URL
+//     an mcp.extraServers entry in .gaviero/settings.json
+//     (.mcp.json / .cursor/mcp.json are not read: gaviero writes them).
+//   (Wuilder URLs need a trailing slash; gaviero-cli adds it for
+//   mcp.wuilder.com.) Cursor agents get `--approve-mcps` and
+//   `--sandbox disabled` plus `.cursor/cli.json` network/MCP
+//   allowlists when a remote Consensus URL is configured; the
+//   synthesized Cursor `.cursor/mcp.json` omits context7 (npx) so the
+//   remote server can register. Agents call tools by server id
+//   `{{CONSENSUS_SERVER}}` (default `consensus`).
+//
+// Roster:
+//
+//   The reviewer panel is a workflow parameter — supplied via
+//   `--param roster=...`. The in-script default below runs a
+//   three-reviewer panel, one each on the top, high and medium tiers,
+//   so the panel gets different models on any profile. Each roster
+//   entry is `id=tier:<name>`; the id becomes the filename prefix and
+//   the tier binds the cloned reviewer agent to the model the chosen
+//   profile gives it. Use distinct ids per reviewer.
+//
+//   The judge stays on tier `medium` — it only classifies summaries
+//   against a fixed rubric and runs once per iteration, so raising its
+//   tier multiplies cost without improving the verdict.
+//
+// Files written per iteration N (N=1 for init, N=2..11 for refinement):
+//
+//   {{OUT_DIR}}/<id>-conclusion-v{N}.md      (the deliverable)
+//   {{OUT_DIR}}/<id>-summary-v{N}.md         (the production log)
+//
+//   Exactly two files, every iteration including init. Artefacts are
+//   write-once: create each versioned file exactly once, read it
+//   later, never overwrite a prior version. They are scratch outputs,
+//   not meant to be committed.
+//
+//   Both templates declare these paths in a `produces [...]` block, so
+//   the contract is enforced by the runtime rather than trusted to the
+//   prompt. Two checks, neither of which costs a model call:
+//
+//     - Per agent: a reviewer that ends its turn without writing both
+//       files (or writes an empty one) gets one corrective retry and
+//       then a Failed manifest — instead of "completed, 0 files".
+//     - Per iteration: the loop refuses to invoke `convergence-judge`
+//       unless every reviewer delivered this pass, and aborts the run
+//       naming the reviewer and the missing paths. A judge scoring a
+//       panel that silently lost a member returns a meaningless
+//       verdict and burns the whole iteration budget doing it.
+//
+//   `{{ITER}}` in a `produces` path is substituted per pass, so writing
+//   the previous version does not satisfy the contract.
+//
+// Termination:
+//
+//   The run is finite by construction, not by hoping every agent
+//   returns. Three independent bounds, none of which costs a model
+//   call:
+//
+//     1. `timeout 3600` on each reviewer template caps one dispatch.
+//        This is the load-bearing one. Provider sessions only give up
+//        when their subprocess *exits*; a wedged-but-alive CLI keeps
+//        the idle loop spinning forever, which is exactly how a run
+//        freezes after the last iteration. With a per-dispatch cap the
+//        worst case is (1 + max_iterations) x (reviewers x timeout +
+//        judge_timeout) — large, but finite.
+//     2. `max_iterations 10` caps how many passes can happen at all.
+//     3. `gaviero-cli --run-timeout <secs>` caps the whole run. It
+//        stops between agents and keeps everything written so far, so
+//        re-running resumes rather than restarting.
+//
+//   A reviewer that blows its budget becomes a Failed manifest, which
+//   the delivery gate then turns into a clean abort naming it — the
+//   run stops with a diagnosis instead of hanging.
+//
+// Stopping early on a deadlock:
+//
+//   `irreconcilable_after 2` — a panel can disagree for reasons no
+//   further iteration will resolve: the reviewers agree on the
+//   evidence and still differ on values, or the deciding experiment
+//   has not been run. Two mechanisms catch that, and either stops the
+//   loop and writes {{OUT_DIR}}/consensus-irreconcilable.md — one
+//   section per reviewer, giving its position, who it conflicts with,
+//   which convergence criterion is at stake, and what evidence would
+//   settle it:
+//
+//     - The judge returns `"verdict": "irreconcilable"` with a
+//       `blockers` array (see the judge prompt for the schema and the
+//       test it applies).
+//     - The runtime notices the judge reporting the *same* blocking
+//       disagreement twice running, whatever verdict it returns.
+//       Fingerprinting is on the blockers' agent/criterion pairing,
+//       not the prose, so rephrasing does not reset the count.
+//
+//   One case skips the wait: a panel that is not studying one
+//   subject, or that reports the anchor as unusable, is a broken
+//   input rather than a disagreement, so the judge is told to return
+//   `irreconcilable` on the FIRST iteration where it appears (see
+//   "Anchor precedence"). `irreconcilable_after` still governs every
+//   genuine deadlock.
+//
+//   This is the failure-side mirror of `stability 2`: two identical
+//   FAILs mean the disagreement is structural, exactly as two
+//   consecutive PASSes mean the agreement is real. Set it to 0 to
+//   disable and let the panel run to `max_iterations`.
+//
+// Conclusion / summary contract:
+//   - conclusion: standalone hand-off document, complete on its own —
+//     no peer ids, no version numbers, no iteration narrative, and no
+//     reference to any other document. Its only external references
+//     are the sources in its own `## Bibliography` section.
+//   - summary: how that conclusion was produced. Every bit of history
+//     lives here — convergence status, problems found, comparison
+//     findings, what changed, what was rejected, the literature
+//     research performed this pass, remaining research questions. The
+//     judge's cheap path reads only summaries.
+//
+// Inputs (set via --var):
+//   PLAN_FILE     — the anchor document: a problem statement or a
+//                   draft research plan (see above). This is the
+//                   run's only source of truth — see "Anchor
+//                   precedence". (default: research_problem.md)
+//   OUT_DIR       — directory for all generated files. (default:
+//                   research; plan-anchored runs default it to the
+//                   plan's own folder instead)
+//   DATA_DIR      — optional local data directory, read-only for every
+//                   reviewer. May be empty or non-existent. (default: data)
+//   LOCAL_LIT_DIR — optional local literature directory, read-only for
+//                   every reviewer. May be empty. (default: literature)
+//   CONSENSUS_SERVER  — MCP server id agents call tools on.
+//                   (default: consensus)
+//   CONSENSUS_MCP_URL — remote MCP URL for operator setup; may
+//                   also come from --mcp-url or mcp.extraServers.
+//   ENABLE_WEB_FALLBACK — allow WebSearch/WebFetch. (default: true;
+//                   set false for an MCP-only panel)
+//
+// Cost note:
+//   Multiple frontier providers x up to 10 refinement passes plus init
+//   is expensive — easily 30+ deep-reasoning turns for a 3-reviewer
+//   panel. Convergence via the judge is the only way to exit early;
+//   the prompts deliberately push reviewers to declare consensus
+//   honestly once substantive disagreements close. `stability 2`
+//   guards against a flaky single PASS verdict.
+//
+// Consensus policy (strict only):
+//
+//   `consensus_mode strict` — the loop exits only on judge PASS (two
+//   consecutive passes via `stability 2`). There is no partial_ok exit.
+//   A single run already retries refinement up to `max_iterations 10`;
+//   you do not need to invoke the workflow twice in one session for that.
+//
+//   If the run ends without consensus, read each reviewer's latest
+//   `*-summary-v*.md` — when status is `Consensus not reached.` the
+//   summary must explain why (see refine prompt). Then either accept
+//   the best-effort conclusions for human merge, or re-run the same
+//   command to carry the panel further.
+//
+//   Re-running against the same OUT_DIR **resumes**: the runtime finds
+//   the newest version every reviewer completed and continues at the
+//   next one, so the init round is skipped and round N+1 reads round
+//   N's conclusions. `max_iterations` is the budget for the new run,
+//   counted from the resumed start. A round that only some reviewers
+//   finished is discarded and re-run in full. Pass `--fresh` to ignore
+//   what is on disk and restart the panel from `iter_start` instead;
+//   use a new `--var OUT_DIR=...` when the {{PLAN_FILE}} or roster
+//   changed, since those artefacts answer a different question.
+//
+// Usage:
+//
+//   Research mode — default 3-reviewer panel:
+//     gaviero-cli --script $GAVIERO_ROOT/.gaviero/dsl/scientific-research/scientific-research.gaviero \
+//       --workflow scientific-research-consensus \
+//       --profile mixed \
+//       --workspace /path/to/research-workspace \
+//       --prompt "Short topic title for logs" \
+//       --var PLAN_FILE=research_problem.md \
+//       --var OUT_DIR=research
+//
+//   Plan-refinement mode — no --workspace; artefacts land next to the plan:
+//     gaviero-cli --script $GAVIERO_ROOT/.gaviero/dsl/scientific-research/scientific-research.gaviero \
+//       --workflow scientific-research-consensus \
+//       --profile mixed \
+//       --prompt "Sparse attention mechanisms" \
+//       --var PLAN_FILE=/path/to/draft-research-plan.md \
+//       --var CONSENSUS_MCP_URL=https://YOUR-MCP-ENDPOINT/ \
+//       --mcp-codex-trust granted
+//
+//   Custom 2-reviewer panel:
+//     gaviero-cli --script $GAVIERO_ROOT/.gaviero/dsl/scientific-research/scientific-research.gaviero \
+//       --workflow scientific-research-consensus \
+//       --profile mixed \
+//       --workspace /path/to/research-workspace \
+//       --prompt "Short topic title for logs" \
+//       --param roster=first=tier:top,second=tier:high
+
+// ── Shared configuration ──────────────────────────────────────────────────────
+//
+// PLAN_FILE: the external anchor document — the run's only source of
+// truth. {{PROMPT}} from the CLI is a non-authoritative label; see
+// "Anchor precedence" in the header.
+//
+// DATA_DIR / LOCAL_LIT_DIR: optional local context. When the directories
+// don't exist or are empty, agents fall back to literature research +
+// the anchor. The defaults match the conventional layout but are fully
+// overridable.
+//
+// INIT_VER: the version written by the init phase; read by the first
+// loop pass as PREV_ITER (iter_start 2 -> PREV_ITER=1 on iteration 1).
+
+vars {
+    OUT_DIR                   "research"
+    INIT_VER                  "1"
+    PLAN_FILE                 "research_problem.md"
+    DATA_DIR                  "data"
+    LOCAL_LIT_DIR             "literature"
+    CONSENSUS_SERVER   "consensus"
+    CONSENSUS_MCP_URL  ""
+    ENABLE_WEB_FALLBACK       "true"
+}
+
+// ── Prompts ───────────────────────────────────────────────────────────────────
+//
+// Three prompts:
+//   - init-body:     independent first pass, conclusion + summary
+//   - refine-body:   peer-aware refinement, conclusion + summary
+//   - judge-body:    two-pass convergence judgement
+//
+// All three reference {{REVIEWER_ID}} (the roster entry id),
+// {{PEER_IDS}} / {{PEER_COUNT}} / {{PEER_READ_BLOCK}} (peer enumeration
+// auto-substituted by the roster expansion), and the runtime
+// {{ITER}} / {{PREV_ITER}} / {{ITER_EVIDENCE}} substitutions.
+
+prompt init-body #"
+    You are an independent senior scientific research strategist.
+
+    Run label (NOT a source of truth): {{PROMPT}}
+    Anchor document — the subject of this study: {{PLAN_FILE}}
+
+    Precedence, before anything else. {{PLAN_FILE}} defines what is
+    being studied. The run label above is a short human-readable
+    string for logs and filenames only; it carries no authority, it
+    may be stale, and it may name something else entirely. If the two
+    appear to name different subjects, the anchor wins — without
+    exception. Never adopt the label's subject, never blend the two,
+    and never read the label as a hint about scope.
+
+    Research channels:
+      - Consensus MCP server id: {{CONSENSUS_SERVER}}
+        (operator-configured; remote URL when set: {{CONSENSUS_MCP_URL}})
+      - Web fallback (WebSearch/WebFetch) enabled: {{ENABLE_WEB_FALLBACK}}
+
+    Optional local material:
+      - Data:              {{DATA_DIR}}/
+      - Local literature:  {{LOCAL_LIT_DIR}}/
+    These directories may not exist or may be empty — treat them as
+    optional. When absent, focus on literature research and the anchor.
+
+    1. Read {{PLAN_FILE}} in full. Treat it as the authoritative
+       description of the endeavour and decide which kind of anchor
+       it is:
+         - a *problem statement* (available data, existing results,
+           constraints, what success looks like): build the research
+           programme from it;
+         - a *draft research plan* (it already proposes hypotheses,
+           methodology, milestones): treat your conclusion as that
+           plan's refined successor — strengthen its hypotheses,
+           methodology, evidence bars, milestones, and stopping rules
+           rather than answering from scratch.
+       Either way, do NOT paraphrase loosely; every downstream
+       conclusion you draw must trace back to something in that file.
+
+       If the anchor turns out to be unusable — it falls outside what
+       a scientific research study can address, it asks only for an
+       artefact the Hard rules below forbid, or it is too ambiguous
+       to yield a research question — then that is your finding, and
+       reporting it is the deliverable. Still write both files: name
+       the defect as the FIRST item of the summary's
+       `## Problems found`, state precisely what the operator must
+       change in {{PLAN_FILE}}, and give the best analysis you can of
+       the subject the anchor actually names. Do NOT fall back to the
+       run label's subject, and do NOT invent a research question the
+       anchor does not contain. A broken anchor is a defect for the
+       operator to fix, never a gap for you to fill.
+
+    2. Inspect {{DATA_DIR}}/ and {{LOCAL_LIT_DIR}}/ for relevant local
+       material. Treat any local data as evidence to be characterised,
+       not as proof. If a directory does not exist, skip it.
+
+    3. Do NOT read any peer outputs (other reviewers' conclusion /
+       summary files) under {{OUT_DIR}}/. This is the
+       independent first pass; peer analyses arrive only in the refine
+       phase. Reading {{PLAN_FILE}} is fine even when it lives
+       inside {{OUT_DIR}}/.
+
+    4. Conduct EXTENSIVE current literature research. Prefer the
+       Consensus MCP server ({{CONSENSUS_SERVER}}) when
+       its tools are available; use WebSearch/WebFetch when
+       ENABLE_WEB_FALLBACK=true (current: {{ENABLE_WEB_FALLBACK}}) or
+       when no MCP server is configured. Prioritise:
+         - peer-reviewed papers, preprints, datasets, benchmarks,
+           standards, and reputable technical reports;
+         - literature from the last 24–36 months when the field is
+           active; include seminal older work only where it materially
+           changes the analysis;
+         - leading research groups, dominant techniques, recent
+           surprises, and the open questions;
+         - negative results, reproducibility issues, retractions, and
+           evidence that weakens attractive hypotheses;
+         - the citation graph two hops deep where something seems
+           load-bearing.
+
+       Do NOT skip this step. The workflow's whole point is that each
+       reviewer brings a fresh, well-sourced literature view;
+       superficial research undermines the comparison phase.
+
+    5. Think from first principles AFTER the research, not before. The
+       literature constrains what's been tried and what failed;
+       first-principles thinking constrains what's plausible under the
+       {{PLAN_FILE}} constraints. Combine them.
+
+    Hard rules:
+      - Be critical, honest, and specific. State your real best
+        assessment, including where you think the problem may be
+        ill-posed or where the available data is likely insufficient.
+      - Distinguish what is known from what is inferred.
+      - Do NOT invent citations, datasets, or results. If no research
+        channel is available, state that explicitly in the summary
+        and rely only on local material.
+      - Do NOT optimise for agreement; optimise for truth and for
+        useful next research actions.
+      - The scientific topic has no relationship to whatever
+        repository or folder hosts this run unless the anchor itself
+        says so — do not read or search the host checkout beyond the
+        inputs listed above.
+      - Do NOT produce an implementation roadmap (no code modules,
+        PR phases, or software-project decomposition) — this holds
+        for draft-plan anchors too.
+      - {{PLAN_FILE}} is the only thing that fixes the subject. If
+        you find yourself analysing something the anchor does not
+        describe, stop and re-read it. An anchor you cannot use is a
+        reportable defect, not a licence to pick your own subject.
+
+    Write TWO files. Create each exactly once with the version suffix
+    below; never edit or overwrite a file from a prior iteration or
+    peer.
+
+    File 1 — the conclusion:
+      {{OUT_DIR}}/{{REVIEWER_ID}}-conclusion-v{{INIT_VER}}.md
+
+    It must contain exactly these sections, in this order:
+      - `## Problem understanding`
+      - `## Current evidence base`
+      - `## Best avenues for advance`
+      - `## Critical risks and failure modes`
+      - `## Data and literature gaps`
+      - `## Proposed research programme`
+      - `## Decision points and stopping criteria`
+      - `## Bibliography`
+
+    Requirements for File 1:
+      - The document must stand entirely on its own: a reader with
+        only this file (and the sources its bibliography points to)
+        has everything. No pointers to any other document.
+      - Rank the best avenues for advance.
+      - For each avenue, state the central hypothesis, evidence
+        needed, expected upside, main risks, first decisive experiment
+        or analysis, and stopping criteria.
+      - Include explicit reasons why attractive avenues may fail.
+      - Decision points and stopping criteria must be specific enough
+        to act on — e.g. "abandon if SNR < 3σ on dataset X" rather
+        than "abandon if results are weak".
+      - `## Bibliography` lists every source the document relies on:
+        title, authors (when available), venue/source, year/date, URL
+        or DOI. Mark each as `local`, `web`, `peer-reviewed`,
+        `preprint`, `dataset`, `standard`, or `report` when possible.
+        Every claim in the body must trace to the anchor, local
+        material, or a bibliography entry.
+
+    File 2 — the production summary:
+      {{OUT_DIR}}/{{REVIEWER_ID}}-summary-v{{INIT_VER}}.md
+
+    This is the log of how File 1 was produced. It must contain
+    exactly these sections, in this order:
+      - `## How this version was produced` — state that this is the
+        independent first pass (no peer input), which anchor kind you
+        detected, and how you approached it.
+      - `## Search strategy` — the search queries, Consensus
+        MCP tool calls, and discovery paths used, and which channels
+        were actually available.
+      - `## Problems found` — where the anchor is ambiguous,
+        ill-posed, or under-specified; claims you could not verify;
+        evidence that surprised you.
+      - `## Research limitations` — what you could not cover and why.
+
+    Aim for depth over breadth. A 3000-word conclusion engaging
+    seriously with 15 sources beats a 1500-word conclusion name-dropping
+    50.
+"#
+
+prompt refine-body #"
+    You are refining your independent scientific research conclusion.
+
+    Run label (NOT a source of truth): {{PROMPT}}
+    Anchor document — the subject of this study: {{PLAN_FILE}}
+    Optional local material: {{DATA_DIR}}/ and {{LOCAL_LIT_DIR}}/
+
+    Precedence, before anything else. {{PLAN_FILE}} defines what is
+    being studied. The run label above is a short human-readable
+    string for logs and filenames only; it carries no authority, it
+    may be stale, and it may name something else entirely. If the two
+    appear to name different subjects, the anchor wins — without
+    exception. Never adopt the label's subject, never blend the two,
+    and never read the label as a hint about scope.
+
+    Research channels:
+      - Consensus MCP server id: {{CONSENSUS_SERVER}}
+      - Web fallback (WebSearch/WebFetch) enabled: {{ENABLE_WEB_FALLBACK}}
+
+    There are {{PEER_COUNT}} other reviewers in this iteration: {{PEER_IDS}}.
+    Your reviewer id is {{REVIEWER_ID}}.
+
+    Inputs to read this pass:
+
+    1. Re-read {{PLAN_FILE}} in full. The anchor is the source of
+       truth — every conclusion must trace back to a constraint,
+       datum, or goal listed there.
+
+       Every reviewer on this panel was given the same anchor, so all
+       of you are studying the same subject. If a peer's conclusion
+       is about something the anchor does not describe — the run
+       label's subject, say — that is a DEFECT in that peer's output,
+       not a position to be adjudicated. Record it under
+       `## Merits of each proposal`, keep your own analysis anchored,
+       and do not move toward it; a panel cannot converge by picking
+       a subject. Likewise, if the anchor itself is unusable (see the
+       init instructions), every reviewer should be reporting that
+       same defect rather than each choosing a different way around
+       it — state the defect and what the operator must change, and
+       do not negotiate a substitute subject with your peers.
+
+    2. Read your own previous work:
+         - {{OUT_DIR}}/{{REVIEWER_ID}}-conclusion-v{{PREV_ITER}}.md
+         - {{OUT_DIR}}/{{REVIEWER_ID}}-summary-v{{PREV_ITER}}.md
+       (Every iteration, including the v1 init pass, writes both.)
+
+    3. Read every peer's previous work IN FULL.
+
+{{PEER_READ_BLOCK}}
+
+       Do read peer summaries even for v1 — the init pass writes one
+       too, and it carries that peer's search trail and the problems
+       they found. A peer's sources live in their conclusion's
+       `## Bibliography` and their summary's research sections; use
+       them to verify the claims behind each peer's argument.
+
+    4. Conduct ADDITIONAL targeted literature research this iteration
+       through the same channels (Consensus MCP first; web
+       tools per the fallback rules above). Do NOT merely repeat the
+       searches from the previous pass. Specifically:
+         - Read primary sources peers cited that you did not. If a peer
+           grounds a claim in a paper outside your prior bibliography,
+           fetch and read that paper before evaluating their argument.
+         - Look for newer publications (preprints in the last six
+           months — the field moves fast).
+         - Search for counter-evidence to the strongest claims in your
+           previous conclusion. Specifically try to falsify your own
+           strongest conclusion.
+         - Follow up on any "I'd want to check X" notes from prior
+           summaries.
+
+       Each refinement pass MUST be backed by fresh searches, not just
+       re-reading the prior documents. A refinement that adds no new
+       sources adds no new signal — the whole point of iterating is to
+       deepen the evidence base.
+
+    Then synthesise:
+
+    5. Evaluate every peer's conclusion on its merits. For each peer
+       in {{PEER_IDS}}:
+         - Strongest claim — and whether the literature supports it.
+         - Weakest claim — and what evidence would change your mind.
+         - What this peer saw that you did not (techniques, risks,
+           sources, framings).
+         - What this peer overlooked or got wrong, citing sources.
+
+    6. Decide whether the panel has converged. Convergence means every
+       reviewer's analysis agrees on:
+         - the framing of the problem;
+         - the top two or three avenues for advance (the same
+           directions, not necessarily the same priority ordering);
+         - the dominant risks and failure modes;
+         - the evidence required to validate or falsify the top
+           avenues;
+         - the decision points and stopping criteria.
+
+       Editorial differences (wording, section length, which extra
+       sources are cited beyond a shared core) DO NOT block convergence.
+
+         - **If the panel has converged**: do NOT introduce new
+           directions, risks, or analytical frames just to make
+           progress visible. Copy your previous conclusion
+           ({{OUT_DIR}}/{{REVIEWER_ID}}-conclusion-v{{PREV_ITER}}.md)
+           into v{{ITER}} verbatim — same sections, same prose, same
+           bibliography. Byte stability across iterations is the
+           desired outcome. Declare convergence in the summary (step
+           8). Do not converge for social reasons.
+
+         - **If the panel has NOT converged**: synthesise a new
+           conclusion taking the strongest evidence-backed elements
+           from your prior conclusion AND from the peer conclusions,
+           and resolve conflicts on their merits. Make the minimum
+           changes needed to close the actual gaps — do not invent
+           additional refinements beyond what the disagreements demand.
+
+    Outputs to write this pass — exactly TWO files. Write NEW
+    versioned paths for this iteration only (`-v{{ITER}}`); never
+    modify files from earlier iterations (including your own).
+
+    7. The conclusion:
+       {{OUT_DIR}}/{{REVIEWER_ID}}-conclusion-v{{ITER}}.md
+
+       Exactly these sections, in this order:
+         - `## Problem understanding`
+         - `## Current evidence base`
+         - `## Best avenues for advance`
+         - `## Critical risks and failure modes`
+         - `## Data and literature gaps`
+         - `## Proposed research programme`
+         - `## Decision points and stopping criteria`
+         - `## Bibliography`
+
+       Same shape as the init body — this is the document a human
+       reviewer would read at the end of the run. Hard rules — failing
+       any of these makes the conclusion unfit for hand-off:
+         - Present your current best conclusion as a standalone
+           document, complete without reading anything else: no
+           pointers to other files, no assumed context beyond the
+           anchor. Rank the avenues for advance. For each avenue,
+           state hypothesis, evidence needed, expected upside, main
+           risks, first decisive experiment or analysis, and stopping
+           criteria.
+         - `## Bibliography` is the ONLY place external references
+           live: every source the body relies on, with title, authors
+           (when available), venue/source, year/date, URL or DOI, and
+           a `local` / `web` / `peer-reviewed` / `preprint` /
+           `dataset` / `standard` / `report` mark when possible.
+           Carry forward the bibliography entries that still back the
+           document — the previous version's bibliography is your
+           starting point, not a reference target.
+         - Do NOT write "I previously said X but now…", "peer Y
+           proposed Z which I reject…", or any first-person iteration
+           narrative.
+         - Do NOT reference peer ids, version numbers (v{{PREV_ITER}},
+           v{{ITER}}), or refinement passes anywhere in the conclusion
+           body.
+         - Do NOT include `## Synthesis Notes`, `## Comparison`, or
+           any other iteration-metadata section in the conclusion.
+
+       All iteration metadata, peer comparison, and version references
+       belong in the summary file (step 8) — never the conclusion.
+
+    8. The production summary:
+       {{OUT_DIR}}/{{REVIEWER_ID}}-summary-v{{ITER}}.md
+
+       Everything about HOW this version came to be lives here and
+       only here: the iteration history, the problems found, what was
+       agreed and what was not, and the research that backed it. Keep
+       it under ~1200 words, with the consensus sections first and
+       tight — the judge's cheap pass reads only the top of this file.
+       Use these sections, in this order:
+         - `## Consensus status` — the very first sentence MUST be
+           EXACTLY one of these two strings, with no other content
+           before it:
+              `Consensus reached.`
+              `Consensus not reached.`
+           The judge keys off that exact phrasing for its cheap
+           summary-only pass. If this version is a no-material-change
+           convergence copy, write `Consensus reached.` and add a
+           second sentence stating which previous version you copied
+           verbatim (e.g. "Copied conclusion-v{{PREV_ITER}} into
+           v{{ITER}} unchanged."). Otherwise write `Consensus not
+           reached.` and one sentence naming the dominant blocking
+           disagreement (avenue, risk, evidence bar, or stopping rule).
+         - `## Why consensus was not reached` — REQUIRED when the first
+           sentence is `Consensus not reached.`; omit this section only
+           when the first sentence is `Consensus reached.`. Explain in
+           plain language: (a) which convergence criterion from step 6
+           failed (framing, top avenues, risks, evidence required, or
+           stopping criteria); (b) which peer positions conflict and
+           why the literature does not yet adjudicate them; (c) what
+           evidence or problem clarification would unblock consensus.
+           This section is the human handoff when the workflow stops
+           without a judge PASS — be specific, not generic.
+         - `## Merits of each proposal` — one short subsection per
+           peer id in {{PEER_IDS}}. For each: what you adopted from
+           them, what you rejected, what specific evidence drove the
+           adjudication. Cite sources.
+         - `## Substantive disagreements` — disagreements that are
+           about substance (avenues, risks, evidence required,
+           stopping criteria), not wording. Empty list if converged.
+         - `## Changes made in this iteration` — what you changed in
+           your conclusion this pass and why. If you copied the
+           previous version verbatim, say so here too.
+         - `## Research performed this iteration` — the search
+           queries, Consensus MCP tool calls, and discovery
+           paths used this pass; the new or revalidated sources (one
+           line each: title, venue, year, URL or DOI) and which claim
+           each supports or weakens; which prior claims this pass
+           strengthened or weakened; and any channel limitations. If
+           the panel converged and you ran only verification searches,
+           say so in one line.
+         - `## Remaining research questions` — the disagreements you
+           expect the next iteration to address. Empty list if
+           converged.
+
+       Write the summary for a human skimming the iteration evolution.
+"#
+
+prompt judge-body #"
+    You are deciding whether a panel of independently refined scientific
+    research conclusions has reached consensus for:
+
+    Run label (NOT a source of truth): {{PROMPT}}
+    Anchor document — the subject under study: {{PLAN_FILE}}
+
+    The anchor defines the subject. The run label is a short string
+    for logs; it carries no authority and may name something else
+    entirely. A reviewer whose conclusion studies the label's
+    subject — or any subject the anchor does not describe — has
+    produced a DEFECTIVE artefact, not a competing position. Never
+    score that as a substantive disagreement for further iterations
+    to resolve; see the IRRECONCILABLE rule below.
+
+    {{ITER_EVIDENCE}}
+
+    The digest above lists what the refine agents actually changed
+    this iteration. Use it to focus your reading — if a file is not
+    listed there it did not change this pass.
+
+    Evaluate in two passes — start cheap, only escalate to the full
+    conclusion documents on borderline calls. Reading every conclusion
+    for every reviewer each iteration is expensive; the summaries
+    exist precisely so this pass can usually settle on summaries alone.
+
+    Pass 1 (cheap, always do this):
+
+    1. Read every reviewer's summary for iteration {{ITER}}. The files
+       live under {{OUT_DIR}}/ and match the glob:
+         {{OUT_DIR}}/*-summary-v{{ITER}}.md
+       Each summary is ≤ ~1200 words with the consensus sections at
+       the top; it carries the convergence status, comparison
+       findings, changes, the research log, and remaining open
+       questions for this pass. You normally only need the top
+       consensus sections — the trailing research log is for peers
+       and the human handoff.
+
+    2. From the summaries alone, classify the iteration (`pass`,
+       `fail`, or `irreconcilable` — never partial):
+
+       - **PASS**: EVERY summary's first sentence is exactly
+         `Consensus reached.`. A single `Consensus not reached.`
+         blocks PASS. When all declare reached, return PASS even if
+         `## Changes made in this iteration` notes a verbatim copy or
+         minor editorial tweaks — those do not negate consensus.
+
+       - **FAIL**: ANY summary's first sentence is exactly
+         `Consensus not reached.`, AND the disagreement still looks
+         closable by another round of evidence. Read that reviewer's
+         `## Why consensus was not reached` (and
+         `## Substantive disagreements`) for the reason; you do not
+         need Pass 2 unless summaries are contradictory or evasive.
+
+       - **IRRECONCILABLE**: consensus was not reached AND another
+         round would not change that. Return this — do not spend the
+         panel's remaining budget — when any of these hold:
+
+           * the same substantive disagreement appears in this
+             iteration and in v{{PREV_ITER}}, restated rather than
+             narrowed (compare the `## Substantive disagreements`
+             sections of both);
+           * the reviewers agree on the evidence and still reach
+             opposite conclusions — the conflict is about values,
+             risk tolerance, or interpretation, not about facts;
+           * the evidence that would settle it does not exist yet
+             (an unrun experiment, an unpublished dataset), so no
+             amount of further literature search can adjudicate it;
+           * the anchor document is ambiguous on the exact point in
+             dispute, so the panel is arguing about the question
+             rather than the answer;
+           * **the panel is not studying one subject** — reviewers
+             analysed different endeavours, or one or more reported
+             the anchor as unusable, out of scope, or too ambiguous
+             to yield a research question. This is a broken input,
+             and no iteration repairs a broken input. Return
+             IRRECONCILABLE the FIRST time it appears — do not wait
+             for it to repeat — with `criterion` set to `framing`
+             and `evidence_gap` naming exactly what the operator must
+             change in {{PLAN_FILE}} or in the run's parameters.
+             Emit one blocker per affected reviewer so the hand-off
+             document names them.
+
+         Being reluctant to declare this is expensive: every extra
+         iteration re-derives the same deadlock at frontier-model
+         rates. Being hasty is also expensive — a disagreement that
+         is merely *unresolved after one pass* is a FAIL, not an
+         impasse. The distinguishing test is whether you can name the
+         specific evidence that would settle it and whether that
+         evidence is reachable this run.
+
+       - **Borderline**: first sentences disagree with body content,
+         or some summaries lack `## Why consensus was not reached`
+         when required — continue to Pass 2.
+
+    Pass 2 (deep, only on borderline):
+
+    3. Read every reviewer's conclusion for iteration {{ITER}}:
+         {{OUT_DIR}}/*-conclusion-v{{ITER}}.md
+
+    4. If you still need it, compare against the v{{PREV_ITER}}
+       conclusions to judge whether a specific difference is material.
+
+    5. Return PASS if the conclusions substantively agree on:
+         - the ranked best avenues for advance;
+         - the critical risks and failure modes;
+         - the evidence required to validate or falsify the top
+           avenues;
+         - the data and literature gaps that matter most;
+         - the decision points and stopping criteria.
+       Wording differences and extra citations beyond a shared core
+       DO NOT block convergence — they are expected artefacts of
+       independent literature reviews.
+
+    6. Otherwise return FAIL, or IRRECONCILABLE if the step-2 test for
+       a structural deadlock applies.
+
+    Output format — emit exactly one fenced JSON object as your last
+    output. Keep `reason` terse (one short sentence) so the response
+    fits inside the judge timeout:
+
+    ```json
+    {"verdict": "pass" | "fail" | "irreconcilable",
+     "reason": "<one short sentence>",
+     "blockers": []}
+    ```
+
+    `blockers` is REQUIRED whenever the verdict is `fail` or
+    `irreconcilable`, and must contain one entry per reviewer that
+    holds a blocking position — the runtime writes the human hand-off
+    document straight from these fields, and it also compares them
+    across iterations to detect a disagreement that is merely being
+    restated. Keep the wording of `criterion` and `conflicts_with`
+    stable between iterations when the underlying dispute has not
+    changed; that stability is the signal:
+
+    ```json
+    {"verdict": "irreconcilable",
+     "reason": "Panel splits on whether executable correctness gates release.",
+     "blockers": [
+       {"agent": "first",
+        "position": "Executable correctness is a necessary release gate.",
+        "conflicts_with": "second",
+        "criterion": "evidence bar",
+        "evidence_gap": "No study measures honest-student outcomes under perturbation."}
+     ]}
+    ```
+
+    Use exactly one of `framing`, `avenues`, `risks`, `evidence bar`,
+    or `stopping criteria` for `criterion` — these are the convergence
+    criteria the reviewers were given. `agent` must be a reviewer id
+    exactly as it appears in the artefact filenames.
+
+    A plain `VERDICT: PASS` / `VERDICT: FAIL` line is accepted as a
+    fallback, but it carries no blockers, so the hand-off document
+    would be empty — always prefer the JSON form.
+"#
+
+// ── Agents ────────────────────────────────────────────────────────────────────
+//
+// Two reviewer templates (init and refine) plus a fixed convergence
+// judge. The init / refine templates are cloned per roster entry by
+// the loop expansion in crates/gaviero-dsl/src/reviewers.rs:
+//
+//   - {{REVIEWER_ID}} is substituted with each entry's id in the
+//     description, scope paths, and prompt body.
+//   - Each clone is bound to an anonymous client carrying that entry's
+//     model + effort.
+//   - Refine clones additionally get {{PEER_IDS}}, {{PEER_COUNT}}, and
+//     {{PEER_READ_BLOCK}} substituted for cross-reviewer prompting.
+//
+// The `tools` list covers the web fallback channel only; Semantic
+// Scholar arrives through the MCP configuration (see header), not
+// through this list.
+//
+// Init agents deliberately do NOT have {{OUT_DIR}}/ in their read_only
+// scope — they form an independent baseline and the prompt forbids
+// reading peer outputs. Refine agents do read {{OUT_DIR}}/.
+
+agent reviewer-init {
+    template true
+    description "Initial scientific research analysis ({{REVIEWER_ID}}): {{PROMPT}}"
+    tools ["WebSearch" "WebFetch"]
+    scope {
+        owned [
+            "{{OUT_DIR}}/{{REVIEWER_ID}}-conclusion-v*.md"
+            "{{OUT_DIR}}/{{REVIEWER_ID}}-summary-v*.md"
+        ]
+        read_only [
+            "{{PLAN_FILE}}"
+            "{{DATA_DIR}}/"
+            "{{LOCAL_LIT_DIR}}/"
+        ]
+    }
+    produces [
+        "{{OUT_DIR}}/{{REVIEWER_ID}}-conclusion-v{{INIT_VER}}.md"
+        "{{OUT_DIR}}/{{REVIEWER_ID}}-summary-v{{INIT_VER}}.md"
+    ]
+    prompt init-body
+    max_retries 1
+    // Deep literature research legitimately runs long; this is the
+    // liveness backstop, not a target. See the header "Termination".
+    timeout 3600
+}
+
+agent reviewer-refine {
+    template true
+    description "Refine scientific research conclusion ({{REVIEWER_ID}}): {{PROMPT}}"
+    tools ["WebSearch" "WebFetch"]
+    scope {
+        owned [
+            "{{OUT_DIR}}/{{REVIEWER_ID}}-conclusion-v*.md"
+            "{{OUT_DIR}}/{{REVIEWER_ID}}-summary-v*.md"
+        ]
+        read_only [
+            "{{PLAN_FILE}}"
+            "{{DATA_DIR}}/"
+            "{{LOCAL_LIT_DIR}}/"
+            "{{OUT_DIR}}/"
+        ]
+    }
+    produces [
+        "{{OUT_DIR}}/{{REVIEWER_ID}}-conclusion-v{{ITER}}.md"
+        "{{OUT_DIR}}/{{REVIEWER_ID}}-summary-v{{ITER}}.md"
+    ]
+    prompt refine-body
+    max_retries 1
+    timeout 3600
+    memory {
+        write_ns   "scientific-research-consensus"
+        importance 0.8
+        write_content #"
+            Scientific research refinement for {{PROMPT}} anchored to {{PLAN_FILE}}.
+        "#
+    }
+}
+
+agent convergence-judge {
+    description "Judge consensus across reviewer panel: {{PROMPT}}"
+    client judge
+    scope {
+        read_only ["{{OUT_DIR}}/" "{{PLAN_FILE}}"]
+    }
+    prompt judge-body
+    max_retries 1
+}
+
+// ── Workflow ──────────────────────────────────────────────────────────────────
+//
+// The `roster` workflow parameter binds the loop's `reviewers` slot to
+// a list of reviewer entries. Override entirely from the CLI:
+//
+//   --param roster=first=tier:top,second=tier:top,third=tier:high
+//
+// The in-script default below runs one reviewer on each of the top, high
+// and medium tiers; the chosen profile decides which models those are.
+//
+// `execution_mode document` (see header) is declared on this workflow:
+// refine agents must read peer artefacts under {{OUT_DIR}}/, which
+// per-agent git worktrees would hide until after the loop exits.
+//
+// Loop knobs:
+//
+//   stability 2       — require 2 consecutive PASS verdicts before
+//                       exiting. A single PASS is treated as
+//                       provisional; the refine agents run one more
+//                       pass and the judge re-evaluates. Guards
+//                       against a flaky "looks good" verdict on a
+//                       panel that is still materially evolving.
+//   judge_timeout 240 — hard cap each judge invocation at 240s (0
+//                       disables). Wide enough that even the deep-read
+//                       borderline path covering every reviewer's
+//                       conclusion can finish.
+//   strict_judge false — unparseable judge output is treated as FAIL
+//                       rather than a hard error; a timeout on the
+//                       final loop check cannot bury the run.
+//   iter_start 2      — loop iteration 1 -> ITER=2, PREV_ITER=1
+//                       (reads the v1 init files); subsequent passes
+//                       increment by 1 up to ITER=11 at iteration 10.
+//
+// The judge prompt also uses {{ITER_EVIDENCE}}: the runtime substitutes
+// a bounded digest of the refine agents' most recent summaries and
+// modified files so the judge can focus on what actually changed.
+//
+// Post-run artefacts:
+//
+//   On consensus: one conclusion + summary pair per reviewer for the
+//   iteration that converged. None is canonical — the operator picks
+//   one or merges.
+//
+//   Without consensus: the loop stops after `max_iterations` or a
+//   failed final judge check. Use the highest `*-summary-v{{ITER}}.md`
+//   per reviewer; `Consensus not reached.` entries must document why
+//   in `## Why consensus was not reached`. A new CLI run is optional
+//   (see header); this script does not auto-restart.
+//
+// max_parallel 5 supports rosters up to five reviewers running in
+// parallel; the default 3-reviewer panel uses three of those slots.
+
+workflow scientific-research-consensus {
+    execution_mode document
+    param judge { model "tier:medium" }
+    param roster [
+        { id "first"  model "tier:top" }
+        { id "second" model "tier:high" }
+        { id "third"  model "tier:medium" }
+    ]
+
+    steps [
+        loop {
+            reviewers       roster
+            template_init   reviewer-init
+            template_refine reviewer-refine
+            max_iterations  10
+            iter_start      2
+            stability       2
+            judge_timeout   240
+            strict_judge    false
+            consensus_mode  strict
+            irreconcilable_after 2
+            until agent     convergence-judge
+        }
+    ]
+    max_parallel 5
+    memory {
+        write_ns "scientific-research-consensus"
+    }
+}

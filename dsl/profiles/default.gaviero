@@ -1,0 +1,50 @@
+// Model profile used when a run does not choose one.
+//
+// The generic tiers (low, medium, high, top) are on Claude. The
+// <level>-<provider> tiers pin a step to that level of one provider; they
+// mirror the claude, codex and cursor profiles, so keep them in step.
+// DeepSeek has no profile of its own and accepts only low, high and max
+// effort, so its four levels are spread over two models and those efforts.
+//
+// These tiers exist only in this profile: a script that names `low-codex`
+// fails to compile under `--profile codex` or any other chosen profile.
+
+client haiku    { model "claude:haiku"         privacy public effort low }
+client sonnet   { model "claude:sonnet"        privacy public effort medium }
+client opus     { model "claude:opus"          privacy public effort high }
+client fable    { model "claude:fable"         privacy public effort xhigh }
+
+client luna     { model "codex:gpt-6-luna"     privacy public effort low }
+client terra    { model "codex:gpt-6.1-terra"  privacy public effort medium }
+client sol      { model "codex:gpt-6.1-sol"    privacy public effort high }
+client astra    { model "codex:gpt-6-astra"    privacy public effort xhigh }
+
+client composer { model "cursor:composer-2.5"  privacy public }
+client grok     { model "cursor:grok-4.7-high" privacy public }
+
+client flash_low  { model "dsh:deepseek-flash"  privacy public effort low }
+client flash_high { model "dsh:deepseek-flash"  privacy public effort high }
+
+
+tier low           haiku
+tier medium        sonnet
+tier high          opus
+tier top           fable
+
+tier low-claude    haiku
+tier medium-claude sonnet
+tier high-claude   opus
+tier top-claude    fable
+
+tier low-codex     luna
+tier medium-codex  terra
+tier high-codex    sol
+tier top-codex     astra
+
+tier low-cursor    composer
+tier medium-cursor composer
+tier high-cursor   composer
+tier top-cursor    grok
+
+tier low-deepseek    flash_low
+tier high-deepseek flash_high

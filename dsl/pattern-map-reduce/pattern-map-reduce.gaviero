@@ -1,0 +1,77 @@
+// Map-reduce fan-out via `pattern map_reduce`.
+//
+// Discover writes `spawn_manifest.json` (worker list). After discover succeeds,
+// the runtime materializes those workers (capped by max_spawn), then reduce runs.
+//
+// Usage:
+//   gaviero-cli --script $GAVIERO_ROOT/.gaviero/dsl/pattern-map-reduce/pattern-map-reduce.gaviero \
+//     --workflow map-reduce \
+//     --profile claude \
+//     --var WORKER_MODEL=<provider:model> \
+//     --prompt "Partition the docs/ tree into review shards"
+//
+// WORKER_MODEL is required. Discover and reduce run on a tier from the profile,
+// but spawned workers are read from a manifest at runtime and the runtime only
+// accepts a concrete `provider:model` there, not a tier. Left empty, the spawn
+// step fails with "worker missing model".
+//
+// Consensus-style multi-reviewer loops are not pattern sugar — use
+// generic-consensus (loop + reviewers roster) instead.
+
+vars {
+    WORKER_MODEL ""
+}
+
+agent discover {
+    description "Discover work shards and write spawn_manifest.json"
+    tier medium
+    scope {
+        owned ["spawn_manifest.json" "artifacts/"]
+        read_only ["docs/" "src/"]
+    }
+    prompt #"
+        Analyze the workspace for: {{PROMPT}}
+
+        Write spawn_manifest.json at the workspace root with this shape:
+        {
+          "version": 1,
+          "workers": [
+            {
+              "id": "shard-1",
+              "model": "{{WORKER_MODEL}}",
+              "description": "Review shard 1",
+              "prompt": "…",
+              "owned": ["artifacts/shard-1/"],
+              "read_only": ["docs/"]
+            }
+          ]
+        }
+
+        Cap workers at a small number. Do not implement the shards yourself.
+    "#
+}
+
+agent reduce {
+    description "Aggregate fan-out worker results"
+    tier medium
+    depends_on [discover]
+    scope {
+        owned ["artifacts/summary.md"]
+        read_only ["artifacts/" "docs/"]
+    }
+    prompt #"
+        After discover and its spawned workers finish, summarize findings into
+        artifacts/summary.md for: {{PROMPT}}
+    "#
+}
+
+workflow map-reduce {
+    pattern map_reduce {
+        discover discover
+        reduce reduce
+        max_spawn 8
+    }
+    steps [discover reduce]
+    max_parallel 4
+    execution_mode document
+}

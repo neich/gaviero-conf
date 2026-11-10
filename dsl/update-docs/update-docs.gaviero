@@ -1,0 +1,263 @@
+// Template: Update all project documentation files
+//
+// Reads the full codebase and rewrites CLAUDE.md, README.md, and
+// ARCHITECTURE.md for each crate/subproject. Works with multi-crate
+// workspaces — discovers all crates automatically.
+//
+// No verification loop needed: documentation changes don't break builds.
+//
+// Worktrees / merge: not used. `max_parallel 1` keeps execution in the
+// shared checkout (Repo mode still applies Write Gate + scope checks).
+// The three writers own disjoint doc sets, so isolation via git worktrees
+// adds merge risk without benefit for docs-only edits.
+//
+// Usage:
+//   gaviero-cli --script $GAVIERO_ROOT/.gaviero/dsl/update-docs/update-docs.gaviero \
+//     --profile claude
+//
+// Swap models by choosing another profile (`--profile codex`, `--profile cursor`).
+// Tiers used: `top` for the inventory and deep writers, `high` for the rest.
+
+// ── Shared configuration ──────────────────────────────────────────────────────
+//
+// Centralizes paths, crate names, and doc types so they can be updated once
+// and applied across all agents.
+
+vars {
+    CRATES_LIST          "gaviero-core gaviero-dsl gaviero-tui gaviero-cli gaviero-mcp-shim tree-sitter-gaviero"
+    ROOT_DOCS            "CLAUDE.md README.md ARCHITECTURE.md"
+    INVENTORY_REPORT     ".gaviero/docs-inventory.md"
+}
+
+// ── Prompts ───────────────────────────────────────────────────────────────────
+//
+// Shared prompt fragments used by the three doc-writing agents. Each agent
+// specializes these with its own vars (DOC_NAME, AUDIENCE, PURPOSE).
+
+prompt inventory_body #"
+    Scan the workspace and produce a structured inventory:
+
+    For each crate/subproject found:
+    1. Crate name and path
+    2. Purpose (inferred from code)
+    3. Current doc files present (CLAUDE.md, README.md, ARCHITECTURE.md)
+    4. What is outdated or missing in each doc file
+    5. Key modules, public types, and entry points
+
+    Also review the root-level documentation files.
+
+    Output a markdown report that the downstream agents will use as their
+    guide for what to write and where. Save to {{INVENTORY_REPORT}}.
+"#
+
+prompt doc_write_body #"
+    Using the inventory report at {{INVENTORY_REPORT}}, rewrite all {{DOC_NAME}} files.
+
+    Target audience: {{AUDIENCE}}
+
+    {{DOC_NAME}} serves this purpose:
+    {{PURPOSE}}
+
+    For each crate in: {{CRATES_LIST}} plus the root directory:
+    1. Write {{DOC_NAME}} (or crates/<crate>/{{DOC_NAME}})
+    2. Follow the format guidelines below
+    3. Be concise and avoid duplication with other .md files
+
+    Format guidelines for {{DOC_NAME}}:
+    {{GUIDELINES}}
+"#
+
+// ── Phase 1: Inventory ───────────────────────────────────────────────────────
+
+agent inventory {
+    description "Inventory all crates and their documentation state"
+    tier top
+    scope {
+        read_only [
+            "src/" "crates/" "Cargo.toml"
+            "CLAUDE.md" "README.md" "ARCHITECTURE.md"
+        ]
+        owned [".gaviero/"]
+    }
+    prompt inventory_body
+    max_retries 1
+
+    memory {
+        read_ns    ["architecture" "feature-history" "refactor-history"]
+        read_query "project structure, recent features, and recent refactors"
+        read_limit 15
+    }
+}
+
+// ── Phase 2: Write documentation ─────────────────────────────────────────────
+
+agent write_claude_md {
+    vars {
+        DOC_NAME   "CLAUDE.md"
+        AUDIENCE   "AI agents executing within the codebase"
+        PURPOSE    #"
+The fixed context injected into every AI prompt. It must contain:
+- Build and test commands
+- Project conventions (naming, error handling, logging patterns)
+- Architecture overview (what goes where)
+- Key rules (never do X, always do Y)
+- Dependencies and their purposes
+- Links to related ARCHITECTURE.md for deeper context
+        "#
+        GUIDELINES #"
+- Be concise and imperative — this is read by AI agents, not humans.
+- Do NOT include information that can be derived from reading the code.
+- ALWAYS add embedded URLs to code locations, docs, or external references for any non-trivial rule or convention.
+- Include section headers: Build & Test, Conventions, Architecture, Rules, Dependencies.
+- For workspace projects, include links to per-crate CLAUDE.md files.
+        "#
+    }
+    description "Rewrite {{DOC_NAME}} for all crates: {{PROMPT}}"
+    tier top
+    depends_on [inventory]
+    scope {
+        owned     [
+            "{{DOC_NAME}}"
+            "crates/gaviero-core/{{DOC_NAME}}"
+            "crates/gaviero-dsl/{{DOC_NAME}}"
+            "crates/gaviero-tui/{{DOC_NAME}}"
+            "crates/gaviero-cli/{{DOC_NAME}}"
+            "crates/gaviero-mcp-shim/{{DOC_NAME}}"
+            "crates/tree-sitter-gaviero/{{DOC_NAME}}"
+        ]
+        read_only ["src/" "crates/" "Cargo.toml" ".gaviero/"]
+    }
+    prompt doc_write_body
+    max_retries 2
+}
+
+agent write_readme_md {
+    vars {
+        DOC_NAME   "README.md"
+        AUDIENCE   "Human developers, contributors, and users"
+        PURPOSE    #"
+The user-facing description of each crate/project. It must contain:
+- What it does (1-2 sentence summary)
+- How to install / build / run
+- Usage examples with code or CLI invocations
+- Configuration options
+- API overview (for libraries)
+- License / contribution info (preserve existing if present)
+        "#
+        GUIDELINES #"
+- Target human readers. Use clear headings and examples.
+- Include section headers: Overview, Installation, Usage, Examples, Configuration, API.
+- For workspace projects, link to per-crate README.md files.
+- Preserve existing License and Contributing sections if present.
+- Use code blocks with language identifiers for syntax highlighting.
+        "#
+    }
+    description "Rewrite {{DOC_NAME}} for all crates: {{PROMPT}}"
+    tier high
+    depends_on [inventory]
+    scope {
+        owned     [
+            "{{DOC_NAME}}"
+            "crates/gaviero-core/{{DOC_NAME}}"
+            "crates/gaviero-dsl/{{DOC_NAME}}"
+            "crates/gaviero-tui/{{DOC_NAME}}"
+            "crates/gaviero-cli/{{DOC_NAME}}"
+            "crates/gaviero-mcp-shim/{{DOC_NAME}}"
+            "crates/tree-sitter-gaviero/{{DOC_NAME}}"
+        ]
+        read_only ["src/" "crates/" "Cargo.toml" ".gaviero/"]
+    }
+    prompt doc_write_body
+    max_retries 2
+}
+
+agent write_architecture_md {
+    vars {
+        DOC_NAME   "ARCHITECTURE.md"
+        AUDIENCE   "Developers and AI agents reviewing design decisions"
+        PURPOSE    #"
+The deep technical description of a crate/project. It must contain:
+- Crate topology and dependency diagram
+- Module map with one-line descriptions
+- Core abstractions (key types, traits, data structures)
+- Data flow diagrams for major operations
+- Concurrency model and lock discipline
+- Error handling strategy
+- Public API surface summary
+        "#
+        GUIDELINES #"
+- Be technically precise. Include ASCII diagrams where helpful.
+- Reference actual type names, function names, and file paths. ALWAYS add embedded URLs to code locations for any non-trivial design element (function, traits, files, etc.).
+- Include section headers: Topology, Modules, Abstractions, Data Flow, Concurrency, Error Handling, API.
+- Link to CLAUDE.md for implementation conventions and rules.
+- For workspace projects, include per-crate ARCHITECTURE.md and explain inter-crate dependencies.
+        "#
+    }
+    description "Rewrite {{DOC_NAME}} for all crates: {{PROMPT}}"
+    tier top
+    depends_on [inventory]
+    scope {
+        owned     [
+            "{{DOC_NAME}}"
+            "crates/gaviero-core/{{DOC_NAME}}"
+            "crates/gaviero-dsl/{{DOC_NAME}}"
+            "crates/gaviero-tui/{{DOC_NAME}}"
+            "crates/gaviero-cli/{{DOC_NAME}}"
+            "crates/gaviero-mcp-shim/{{DOC_NAME}}"
+            "crates/tree-sitter-gaviero/{{DOC_NAME}}"
+        ]
+        read_only ["src/" "crates/" "Cargo.toml" ".gaviero/"]
+    }
+    prompt doc_write_body
+    max_retries 2
+}
+
+// ── Phase 3: Record ──────────────────────────────────────────────────────────
+
+agent record_docs_update {
+    vars {
+        REVIEW_SCOPE "CLAUDE.md (AI context), README.md (user guide), ARCHITECTURE.md (technical design)"
+    }
+    description "Record documentation update to memory: {{PROMPT}}"
+    tier high
+    depends_on [write_claude_md write_readme_md write_architecture_md]
+    scope {
+        read_only ["CLAUDE.md" "README.md" "ARCHITECTURE.md" "crates/"]
+    }
+    prompt #"
+        Review all documentation files that were just updated across:
+        {{REVIEW_SCOPE}}
+
+        Write a concise summary of:
+        - Which files were updated and what changed
+        - Any structural decisions made (e.g. new sections added)
+        - Anything that could not be documented due to missing information
+        - Cross-references and consistency between the three doc types
+    "#
+    max_retries 1
+
+    memory {
+        write_ns      "architecture"
+        importance    0.8
+        write_content #"
+            Documentation update for {{PROMPT}}:
+            Scope: {{REVIEW_SCOPE}}
+            Crates: {{CRATES_LIST}}
+        "#
+    }
+}
+
+// ── Workflow ──────────────────────────────────────────────────────────────────
+
+workflow update_docs {
+    // Writers own disjoint doc sets, but run sequentially so Repo mode
+    // does not provision worktrees or run a merge phase (see header).
+    steps [inventory write_claude_md write_readme_md write_architecture_md record_docs_update]
+    max_parallel 1
+    strategy single_pass
+
+    memory {
+        read_ns  ["architecture" "feature-history" "refactor-history"]
+        write_ns "architecture"
+    }
+}

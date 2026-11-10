@@ -1,0 +1,213 @@
+// N-provider *implementation-plan* refinement with a convergence judge.
+//
+// `execution_mode document` — shared workspace, no git worktrees/merge. Required
+// because default `OUT_DIR=plans` is gitignored: Repo-mode worktrees write the
+// artefacts, `git status` hides them, merge commits nothing, and teardown
+// deletes the worktree copies. Document mode keeps files on disk under OUT_DIR.
+//
+// Produces a plan written exclusively for a frontier AI coding agent with
+// high reasoning capability — the sole implementor. The feature brief is
+// supplied by the operator via `--prompt-file`; its contents replace every
+// `{{PROMPT}}` in this script (mutually exclusive with `--prompt`).
+//
+// Parallel rounds: every provider in the roster runs concurrently each
+// iteration (`max_parallel` on the workflow). The runtime waits for the full
+// panel to finish (barrier) before the judge runs and the next round starts.
+// Agents only write disjoint artefacts under `{{OUT_DIR}}/<id>-*`; they may
+// read the checkout but must not edit source outside `{{OUT_DIR}}/`.
+//
+// Round 1 (`{{PREV_ITER}}` = 0): each provider reads only the feature brief
+// (`--prompt-file` → `{{PROMPT}}`) and writes its own implementation plan +
+// iteration summary. No peer artefacts exist yet.
+//
+// Round 2+ (`{{PREV_ITER}}` >= 1): each provider reads every other provider's
+// prior plan and summary, then writes a refined plan + summary.
+//
+// Usage (research-consensus UX plan review from repo root):
+//   gaviero-cli --script $GAVIERO_ROOT/.gaviero/dsl/plan-refinement/plan-refinement.gaviero \
+//     --workflow feature-plan-refinement \
+//     --profile claude \
+//     --prompt-file plans/research-consensus-ux-brief.md \
+//     --var OUT_DIR=plans/research-consensus-ux
+//
+// The default roster puts one reviewer on each of the top, high and medium
+// tiers, so the panel gets different models on any profile. Override with:
+//   --param roster=first=tier:top,second=tier:top,third=tier:high
+//
+// Roster entry format: `id=tier:<name>` (comma-separated).
+// Each `id` becomes {{REVIEWER_ID}} in artefact paths under {{OUT_DIR}}/.
+//
+// Resuming: re-running the same command against an {{OUT_DIR}} that
+// already holds artefacts continues the panel instead of overwriting it.
+// The runtime takes the newest `-v<N>` every reviewer completed, resumes
+// at N+1 (so {{PREV_ITER}} = N), and re-runs any round only some
+// reviewers finished. `max_iterations` is the budget for the new run,
+// counted from the resumed start. Pass `--fresh` to restart at
+// `iter_start` and overwrite what is there.
+
+
+vars {
+    OUT_DIR  "plans"
+    INIT_VER "1"
+}
+
+// ── Prompts ───────────────────────────────────────────────────────────────────
+//
+//   {{PROMPT}}     — feature brief from --prompt-file
+//   {{ITER}}       — absolute iteration counter (injected at runtime)
+//   {{PREV_ITER}}  — prior iteration; 0 on the first panel round
+
+prompt refine-body #"
+    You are producing or refining an *implementation plan* for a frontier AI
+    coding agent with high reasoning capability. That agent — and only that
+    agent — will execute the plan directly.
+
+    Feature brief (operator supplied via --prompt-file):
+
+    {{PROMPT}}
+
+    Your reviewer id is {{REVIEWER_ID}}. There are {{PEER_COUNT}} other
+    reviewers in this panel: {{PEER_IDS}}.
+
+    The plan file is for that executor and has no knowledge of the iteration
+    history. Write the plan in declarative, committed voice. Hard rules —
+    failing any of these makes the plan unfit for the executor:
+      - Say what to build, why, and how — nothing else.
+      - Every step must be actionable by a single high-reasoning agent.
+      - Do NOT write "we chose X over Y", peer comparisons, or iteration
+        meta-narrative in the plan file.
+      - Do NOT reference peer plans, model names, version numbers
+        (v{{PREV_ITER}}, v{{ITER}}), or refinement passes in the plan file.
+      - Do NOT include `## Synthesis Notes` or `## Alternatives Considered`
+        in the plan file.
+      - If a rejected alternative implies a hard implementation constraint,
+        inline it as a rule in the relevant section, not as a comparison.
+    All synthesis history, peer comparisons, and convergence declarations
+    belong in the **summary** file — never the plan file.
+
+    ── Round 1 (`{{PREV_ITER}}` = 0) ──────────────────────────────────────
+    When `{{PREV_ITER}}` is 0 this is an independent first pass:
+      1. Skim CLAUDE.md and ARCHITECTURE.md (if present) and explore the
+         checkout to ground paths, APIs, and test commands. Do NOT read any
+         files under `{{OUT_DIR}}/` (no peer artefacts yet).
+      2. Produce an implementation plan from the feature brief alone.
+      3. Write BOTH output files for iteration {{ITER}} (steps 5–6 below).
+
+    ── Round 2+ (`{{PREV_ITER}}` >= 1) ─────────────────────────────────────
+    When `{{PREV_ITER}}` >= 1, read in full:
+      1. Your previous plan:
+           {{OUT_DIR}}/{{REVIEWER_ID}}-refine-plan-v{{PREV_ITER}}.md
+         When `{{PREV_ITER}}` >= 2, also your prior summary:
+           {{OUT_DIR}}/{{REVIEWER_ID}}-refine-summary-v{{PREV_ITER}}.md
+
+      2. Every other reviewer's previous plan. For each peer in {{PEER_IDS}}:
+           {{OUT_DIR}}/<peer>-refine-plan-v{{PREV_ITER}}.md
+
+      3. When `{{PREV_ITER}}` >= 2, every peer's prior summary:
+           {{OUT_DIR}}/<peer>-refine-summary-v{{PREV_ITER}}.md
+         Use summaries ONLY for gap analysis — they must not shape the plan
+         file's voice or content.
+
+    Then analyse the panel (round 2+ only), decide convergence, and either
+    copy your previous plan verbatim when converged or synthesise minimum
+    changes when not.
+
+  Plan sections (both rounds) — in this order:
+    - `## Motivation and goals`
+    - `## Architecture and component breakdown`
+    - `## Implementation steps` (ordered, concrete — file-level where possible)
+    - `## Data structures and API surface`
+    - `## Risks and mitigations`
+    - `## Operator Decisions` — forward-looking conditional bullets for the
+      executor (~10 max; "None — plan is review-ready." if empty)
+    - `## Phase decomposition` — per-phase owned files/crates, read-only deps,
+      mechanical pass/fail signals, cross-phase entanglement
+    - `## Execution shape` — `phased-plan.gaviero` via `--prompt-file` (a) or
+      N separate invocations (b); state tradeoffs explicitly
+
+    5. Write the plan to
+       {{OUT_DIR}}/{{REVIEWER_ID}}-refine-plan-v{{ITER}}.md
+
+    6. Write the iteration summary to
+       {{OUT_DIR}}/{{REVIEWER_ID}}-refine-summary-v{{ITER}}.md (~600 words):
+         - **Convergence status** (one sentence, leads). On a no-change
+           convergence copy say e.g. "Converged with panel at v{{PREV_ITER}};
+           this version is a no-material-change copy."
+         - **Synthesis notes** (round 2+; on round 1 note "Independent first
+           pass — no peer artefacts read.")
+         - **Alternatives considered and rejected**
+         - **Operator Decisions digest**
+"#
+
+prompt judge-body #"
+    You are deciding whether a panel of independently refined *implementation
+    plans* have converged. Each plan is for a frontier AI coding agent — the
+    sole implementor. Feature brief:
+
+    {{PROMPT}}
+
+    {{ITER_EVIDENCE}}
+
+    Pass 1: read every `{{OUT_DIR}}/*-refine-summary-v{{ITER}}.md`. PASS if all
+    declare convergence; FAIL on material divergence; else Pass 2.
+
+    Pass 2: read every `{{OUT_DIR}}/*-refine-plan-v{{ITER}}.md`. PASS if all
+    agree on core architecture and major implementation steps.
+
+    ```json
+    {"verdict": "pass" | "fail", "reason": "<one short sentence>"}
+    ```
+"#
+
+agent reviewer-refine {
+    template true
+    description "Implementation plan panel ({{REVIEWER_ID}})"
+    scope {
+        owned     ["{{OUT_DIR}}/{{REVIEWER_ID}}-refine-*.md"]
+        read_only ["." "{{OUT_DIR}}/"]
+    }
+    prompt refine-body
+    memory {
+        write_ns   "plan-evolution"
+        importance 0.7
+        write_content #"
+            {{REVIEWER_ID}} implementation-plan refinement.
+        "#
+    }
+}
+
+agent convergence-judge {
+    description "Judge implementation-plan convergence"
+    client judge
+    scope {
+        read_only ["{{OUT_DIR}}/"]
+    }
+    prompt judge-body
+}
+
+workflow feature-plan-refinement {
+    execution_mode document
+    param judge { model "tier:medium" }
+    param roster [
+        { id "first"  model "tier:top" }
+        { id "second" model "tier:high" }
+        { id "third"  model "tier:medium" }
+    ]
+
+    steps [
+        loop {
+            reviewers       roster
+            template_refine reviewer-refine
+            max_iterations  5
+            iter_start      1
+            stability       2
+            judge_timeout   180
+            strict_judge    false
+            until agent     convergence-judge
+        }
+    ]
+    max_parallel 4
+    memory {
+        write_ns "plan-evolution"
+    }
+}
