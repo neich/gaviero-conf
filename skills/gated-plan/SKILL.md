@@ -24,7 +24,7 @@ Verify with tools before asking the user: every fact checked is one question few
 - **Libraries:** find the installed version in the lockfile or manifest. Then read the API at that version: context7 (`resolve-library-id`, then `query-docs`), or the installed source (`node_modules`, site-packages, `~/.cargo/registry`, vendored code). Never pin a version or an API from memory.
 - **Known issues:** WebSearch and WebFetch for deprecations, breaking changes and open bugs in the pinned versions (changelogs, release notes, issue trackers). A claim counts only if you opened the page; a search snippet is a lead. Never put secrets or private code in a search query.
 - **Large repos:** before drafting, you may launch read-only explorer subagents in parallel, one per area, to gather facts. This is plan authoring; the no-parallel-agents rule in the execution model applies to execution only. Open each fact an explorer reports yourself before it enters the plan.
-- **Literature:** if a milestone depends on what published research says, run `/deep-research` first and have the plan cite its report. Don't research the literature inside this skill.
+- **Literature:** if a milestone depends on what published research says, run `/deep-research` first and have the plan cite its report. Take exact values from the report's `## Implementation notes`, and check its `.evidence.md` file for details the report summarised. Turn the report's "Decisions left open" into questions for the user. Don't research the literature inside this skill.
 
 The verification is done when every path, identifier, version and API in the plan was read in this session; everything else is a question for the user.
 

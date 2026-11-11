@@ -2,7 +2,7 @@
 name: deep-research
 description: Agentic multi-source research (web + every configured scholarly MCP server — arXiv, Semantic Scholar, PubMed, Consensus, …) producing a citation-rich markdown report, including paper full text and citation-graph relationships — the CLI equivalent of ticking claude.ai's Research box. Use for any request to research, investigate, deep-dive, review the literature or state of the art, compare options across many sources, or produce a sourced report — even if the word "research" never appears. Depth tiers quick / standard (default) / deep, tunable with key=value overrides. Reliable invocation is /deep-research [tier:] [key=value ...] <question>.
 argument-hint: "[quick:|deep:] [subq=N searches=N fetches=N waves=N triangulate=N agents=N hops=N] <research question>"
-allowed-tools: WebSearch, WebFetch, Task, Write, Read, mcp__claude_ai_Arxiv_org__*, mcp__claude_ai_Semantic_Scholar__*, mcp__claude_ai_PubMed__*, mcp__claude_ai_Consensus__*, mcp__claude_ai_alphaXiv__*
+allowed-tools: WebSearch, WebFetch, Task, Write, Edit, Read, mcp__context7__*, mcp__claude_ai_Arxiv_org__*, mcp__claude_ai_Semantic_Scholar__*, mcp__claude_ai_PubMed__*, mcp__claude_ai_Consensus__*, mcp__claude_ai_alphaXiv__*
 ---
 
 # Deep Research
@@ -172,13 +172,41 @@ How to use them:
        numbers, abstract otherwise. Snowball the citation graph <hops> hop(s)
        from your best seed papers (references, citing papers,
        recommendations). Do not write files or change any library, watch or
-       collection state. Return ≤700 words: findings as bullet claims, each
-       with source URL, date and DOI/arXiv ID/PMID when it is a paper; note
-       conflicts between sources and anything you could not verify. Evidence
+       collection state. For a library, framework or API, read its official
+       docs with context7 (`resolve-library-id`, then `query-docs`) if you
+       have it, and note the version each fact applies to. Return four
+       parts, every entry a terse one-liner, with no prose paragraphs and no
+       word cap; never drop an entry to save space: (a) findings as claims,
+       each with source URL, publication date and DOI/arXiv ID/PMID when it
+       is a paper; (b) specifics: exact names, versions, APIs, parameters,
+       config keys, commands, limits and figures, each with its source and
+       the section or page when known; (c) every source you opened: URL or
+       ID, access date, the index or tool it came from, what it gave (or
+       'irrelevant'), and its citation links to other papers you found
+       ('cites X', 'replicates Y', 'contradicts Z'); (d) conflicts,
+       unverified points, snippet-only leads with their URL, leads you did
+       not follow, queries that found nothing, fetches that failed
+       (paywall, error) and servers that were unavailable or rate-limited.
+       Evidence
        rules: report only what a source you actually opened states, never
        what you remember. Tag each claim `fetched`, `abstract-only` or
        `snippet-only`. Never invent URLs, titles, IDs, figures or quotes. Say
        'not found' rather than filling a gap."
+   - *Evidence file*: you (the orchestrator, never a subagent) keep
+     `research/<kebab-slug>-<YYYY-MM-DD>.evidence.md`. It is the lossless
+     record of the research phase; the report distils it and must not be
+     the only copy of a finding.
+     - Create it, and the `research/` folder, before investigating. Start
+       it with the question, the answers to any scope questions from step 1,
+       the effective parameters and the plan from step 2.
+     - As each subagent returns, append its report verbatim before
+       synthesising, under `## Wave <w>, sub-question <n>: <question>`.
+     - Append your own lookups (any tier, including context7, Consensus
+       threads and fetches made while checking a claim) in the same four
+       parts, under `## Orchestrator`, as soon as each one is done, not at
+       the end.
+     - With `waves>1`, append the gap and conflict list that drives each
+       next wave.
    - *`waves>1`*: after each wave, list the gaps, the conflicts, and the
      load-bearing claims that have fewer than `triangulate` independent fetched
      sources. Launch targeted subagents on them in the next wave, staying
@@ -196,13 +224,20 @@ How to use them:
      tools and say so in the report.
    - If no scholarly server is available, use WebSearch on publisher, arXiv
      and PubMed pages, and say so in the report.
+   - For libraries, frameworks, SDKs and APIs, read the official docs with
+     context7 (`resolve-library-id`, then `query-docs`) when it is in your
+     tool list, and the changelog or release notes. Record the version each
+     fact applies to.
    - Ignore any tool-schema note claiming WebSearch is US-only. It works
      globally; use it.
 
 5. **Report.** Follow the Report template section below. Write the
    report (all tiers) to `research/<kebab-slug>-<YYYY-MM-DD>.md`, creating the
    folder if needed. Every non-obvious claim gets an inline markdown link to its
-   source and an evidence label (see Evidence standard).
+   source and an evidence label (see Evidence standard). The report header
+   links the evidence file from step 3. Write the report so a planner who
+   reads only it (and the evidence file) can build an implementation plan
+   without redoing the research.
 
 6. **Self-check (before writing the file).** Go through the draft sentence by
    sentence:
@@ -215,8 +250,17 @@ How to use them:
    - Make sure duplicate papers found in several indexes weren't counted as
      independent sources.
    - Move whatever falls out to Open questions & caveats.
+   - **Coverage check.** Walk the evidence file item by item. Every finding,
+     specific, citation link and opened source, and every item in part (d)
+     (conflicts, unverified points, snippet-only leads, unfollowed leads,
+     empty queries, failed fetches, unavailable servers), must land
+     somewhere in the report: Findings, Implementation notes, Literature
+     map, Open questions & caveats, or Sources.
+     If you leave one out on purpose (off-topic, superseded, duplicate), list
+     it under a closing `## Not carried into the report` section of the
+     evidence file with a one-line reason. Nothing may vanish silently.
 
-7. **Reply** in chat with the file path and a ≤10-line summary of key findings.
+7. **Reply** in chat with both file paths and a ≤10-line summary of key findings.
    Keep the evidence labels on the load-bearing claims. Do not paste the full
    report. Add any usage message a tool asked to have shown, word-for-word.
 
@@ -228,7 +272,10 @@ substantially shorter than the sources it distills.
 ```markdown
 # <Headline answering the question>
 
-*<YYYY-MM-DD> · depth: <tier> (subq=… searches=… fetches=… waves=… triangulate=… agents=… hops=…) · <n> sources fetched · indexes: <web, arXiv, Semantic Scholar, PubMed, Consensus, … actually used>*
+*<YYYY-MM-DD> · depth: <tier> (subq=… searches=… fetches=… waves=… triangulate=… agents=… hops=…) · <n> sources fetched · indexes: <web, arXiv, Semantic Scholar, PubMed, Consensus, … actually used> · evidence: [<slug>-<date>.evidence.md](<slug>-<date>.evidence.md)*
+
+**Question:** <the research question as asked> · **Scope:** <answers to any
+scope questions, or "no clarification needed">
 
 ## Executive summary
 5–10 sentences that directly answer the question, including the main caveat.
@@ -240,6 +287,22 @@ carries one label: *verified* (fetched source states it; add "≥2 independent
 sources" when true) · *single source* · *inferred* (give the reasoning) ·
 *assumed* (say what would confirm it) · *unverified (snippet only)*. Add
 *(abstract only)* to paper claims not checked against the full text.
+
+## Implementation notes
+Never omit this section. If the question informs nothing to build, change
+or decide, say so in one line. Same evidence labels and inline citations as
+Findings.
+- **Recommendation:** the option the evidence favours and why, or "no clear
+  winner" with the deciding factors.
+- **Specifics:** a table with one row per fact a plan must state exactly.
+  Columns: item (library, API, parameter, config key, command, limit,
+  figure) · exact value · version it applies to · source.
+- **Constraints and risks:** known bugs, deprecations, breaking changes,
+  licence or platform limits, each with its source.
+- **Alternatives considered:** each rejected option, with the evidence
+  against it.
+- **Decisions left open:** what the research could not settle. These become
+  questions for the planner.
 
 ## Literature map
 Include this section only when papers were used. Base it on the citation
@@ -259,16 +322,17 @@ stale. List any scholarly server that was unavailable, unauthenticated or
 rate-limited. Never omit this section.
 
 ## Sources
-1. Title — publisher, date. URL
+1. Title — publisher, date. URL · accessed <YYYY-MM-DD> · version (docs)
 2. Paper title — first author et al., venue, year. DOI / arXiv ID / PMID.
-   URL · via <index> (full text | abstract)
+   URL · via <index> (full text | abstract) · accessed <YYYY-MM-DD>
 3. ...
 ```
 
 Template rules:
 - Evidence only: nothing from memory. Every cited source was actually fetched
   in this run and states what it is cited for. `## Sources` lists only fetched
-  sources.
+  sources. Snippet-only leads go in Open questions & caveats with their URL,
+  labelled *unverified (snippet only)*.
 - Quote sparingly (<25 words per source); paraphrase by default.
 - Prefer the most recent primary source when sources conflict, and say which one
   won and why.
