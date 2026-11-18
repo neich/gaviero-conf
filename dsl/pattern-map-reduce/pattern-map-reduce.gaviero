@@ -7,19 +7,18 @@
 //   gaviero-cli --script $GAVIERO_ROOT/.gaviero/dsl/pattern-map-reduce/pattern-map-reduce.gaviero \
 //     --workflow map-reduce \
 //     --profile claude \
-//     --var WORKER_MODEL=<provider:model> \
+//     --var WORKER_TIER=high \
 //     --prompt "Partition the docs/ tree into review shards"
 //
-// WORKER_MODEL is required. Discover and reduce run on a tier from the profile,
-// but spawned workers are read from a manifest at runtime and the runtime only
-// accepts a concrete `provider:model` there, not a tier. Left empty, the spawn
-// step fails with "worker missing model".
+// Discover and reduce run on a tier from the profile, and so do the spawned
+// workers: each manifest entry names a `tier` of the run's profile
+// (WORKER_TIER, default `medium`). A manifest entry may not name a model.
 //
 // Consensus-style multi-reviewer loops are not pattern sugar — use
 // generic-consensus (loop + reviewers roster) instead.
 
 vars {
-    WORKER_MODEL ""
+    WORKER_TIER "medium"
 }
 
 agent discover {
@@ -38,7 +37,7 @@ agent discover {
           "workers": [
             {
               "id": "shard-1",
-              "model": "{{WORKER_MODEL}}",
+              "tier": "{{WORKER_TIER}}",
               "description": "Review shard 1",
               "prompt": "…",
               "owned": ["artifacts/shard-1/"],

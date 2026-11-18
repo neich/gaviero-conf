@@ -9,10 +9,13 @@
 // These tiers exist only in this profile: a script that names `low-codex`
 // fails to compile under `--profile codex` or any other chosen profile.
 
-client haiku    { model "claude:haiku"         privacy public effort low }
-client sonnet   { model "claude:sonnet"        privacy public effort medium }
+client haiku    { model "claude:haiku"         privacy public effort xhigh }
+client haiku-max     { model "claude:haiku"          privacy public effort max }
+client sonnet   { model "claude:sonnet"        privacy public effort xhigh }
 client opus     { model "claude:opus"          privacy public effort high }
-client fable    { model "claude:fable"         privacy public effort xhigh }
+client opus-med     { model "claude:opus"          privacy public effort medium }
+client opus-xhigh     { model "claude:opus"          privacy public effort xhigh }
+client fable    { model "claude:fable"         privacy public effort high }
 
 client luna     { model "codex:gpt-6-luna"     privacy public effort low }
 client terra    { model "codex:gpt-6.1-terra"  privacy public effort medium }
@@ -26,10 +29,10 @@ client flash_low  { model "dsh:deepseek-flash"  privacy public effort low }
 client flash_high { model "dsh:deepseek-flash"  privacy public effort high }
 
 
-tier low           haiku
-tier medium        sonnet
+tier low           haiku-max
+tier medium        opus-med
 tier high          opus
-tier top           fable
+tier top           opus-xhigh
 
 tier low-claude    haiku
 tier medium-claude sonnet
@@ -46,5 +49,5 @@ tier medium-cursor composer
 tier high-cursor   composer
 tier top-cursor    grok
 
-tier low-deepseek    flash_low
+tier low-deepseek  flash_low
 tier high-deepseek flash_high
