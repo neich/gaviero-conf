@@ -1,6 +1,6 @@
 ---
 name: academic-research
-description: Academic literature research built on the `academic` MCP server (OpenAlex + Semantic Scholar + Europe PMC search, GROBID full text, citation graph, retraction checks, Consensus evidence). It measures search recall against a benchmark set, screens with two passes that lean towards inclusion, snowballs citations backward then forward, writes only from extracted quotes, and checks every claim against its cited passage. It writes to research/<slug>/ with sequential versions (<slug>-v1.md, <slug>-v2.md, …); each version has the scholarly review plus a full evidence table, a reproducible search log and a BibTeX file (a plain-language explanation is a separate step: /research-companion). Use it for questions about what the research literature says: literature reviews, state of the art, "what does the evidence say", systematic-style scoping, finding seminal and recent papers, checking whether a finding has held up. Use /deep-research instead for questions that are mainly about the web, products or news. Depth tiers are quick / standard (default) / deep, tunable with key=value overrides. Invoke reliably with /academic-research [tier:] [key=value ...] <question>.
+description: Academic literature research built on the `academic` MCP server (OpenAlex + Semantic Scholar + Europe PMC search, GROBID full text, citation graph, retraction checks, Consensus evidence). It measures search recall against a benchmark set, screens with two passes that lean towards inclusion, snowballs citations backward then forward, writes only from extracted quotes, and checks every claim against its cited passage. It writes to research/<slug>/ with sequential versions (<slug>-v1.md, <slug>-v2.md, …); each version has the scholarly review plus a full evidence table, a reproducible search log and a BibTeX file (a plain-language explanation is a separate step, run only when the user asks for it with /research-companion). Use it for questions about what the research literature says (literature reviews, state of the art, "what does the evidence say", systematic-style scoping, finding seminal and recent papers, checking whether a finding has held up). Use /deep-research instead for questions that are mainly about the web, products or news. Depth tiers are quick / standard (default) / deep, tunable with key=value overrides. Invoke reliably with /academic-research [tier:] [key=value ...] <question>.
 argument-hint: "[quick:|deep:] [subq=N searches=N reads=N waves=N triangulate=N agents=N hops=N bench=N since=YYYY evidence=N review=0|1] <research question>"
 allowed-tools: Task, Write, Read, WebFetch, WebSearch, mcp__academic__*
 ---
@@ -474,7 +474,7 @@ distils.
 **Shared contract.** `/research-companion` parses this layout: the file
 names, the `*Version v<N> · files:` header line, the section names, and
 the evidence labels and access marks. If you change any of them, update
-the contract section of `research-companion/SKILL.md` too.
+the academic-research profile in `research-companion/SKILL.md` too.
 
 ```markdown
 # <Headline answering the question>
