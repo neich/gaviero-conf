@@ -11,8 +11,8 @@
 //     --var PROBLEM_FILE=consensus/problem.md \
 //     --var OUT_DIR=consensus_runs/latest
 //
-// Override the roster from the CLI (each entry is `id=tier:<name>`):
-//   --param roster=first=tier:top,second=tier:high,third=tier:medium
+// Override the roster from the CLI (each entry is `id=<name>`):
+//   --param roster=first=top,second=high,third=medium
 //
 // Modes (loop consensus_mode):
 //   strict      — only PASS ends early (after stability)
@@ -111,10 +111,11 @@ prompt judge-body #"
     ```
 "#
 
-// Reviewer agent templates. They have no `client` of their own — each
-// roster entry brings its model + effort, and the expansion pass binds the
-// cloned agent to an anonymous client built from that entry.
+// Reviewer agent templates. Each roster entry names a tier, and the
+// expansion pass runs the cloned agent on that tier of the chosen profile
+// (the template's own `tier high` applies only if an entry gives none).
 agent reviewer-init {
+    tier high
     template true
     description "Initial conclusion ({{REVIEWER_ID}}): {{PROMPT}}"
     scope {
@@ -125,6 +126,7 @@ agent reviewer-init {
 }
 
 agent reviewer-refine {
+    tier high
     template true
     description "Refine conclusion ({{REVIEWER_ID}}): {{PROMPT}}"
     scope {
@@ -139,7 +141,7 @@ agent reviewer-refine {
 
 agent consensus-judge {
     description "Judge consensus: {{PROMPT}}"
-    client judge
+    tier medium
     scope {
         read_only ["{{OUT_DIR}}/"]
     }
@@ -147,13 +149,12 @@ agent consensus-judge {
 }
 
 workflow generic-consensus {
-    param judge { model "tier:medium" }
     // Roster parameter — supplied externally. The default below runs a
     // two-reviewer panel on different tiers so the reviewers get different
     // models. Override via `--param roster=...` for a different panel.
     param roster [
-        { id "first"  model "tier:top" }
-        { id "second" model "tier:high" }
+        { id "first"  tier top }
+        { id "second" tier high }
     ]
 
     steps [

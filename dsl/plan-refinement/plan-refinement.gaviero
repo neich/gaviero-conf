@@ -32,9 +32,9 @@
 //
 // The default roster puts one reviewer on each of the top, high and medium
 // tiers, so the panel gets different models on any profile. Override with:
-//   --param roster=first=tier:top,second=tier:top,third=tier:high
+//   --param roster=first=top,second=top,third=high
 //
-// Roster entry format: `id=tier:<name>` (comma-separated).
+// Roster entry format: `id=<name>` (comma-separated).
 // Each `id` becomes {{REVIEWER_ID}} in artefact paths under {{OUT_DIR}}/.
 //
 // Resuming: re-running the same command against an {{OUT_DIR}} that
@@ -160,6 +160,7 @@ prompt judge-body #"
 "#
 
 agent reviewer-refine {
+    tier high
     template true
     description "Implementation plan panel ({{REVIEWER_ID}})"
     scope {
@@ -178,7 +179,7 @@ agent reviewer-refine {
 
 agent convergence-judge {
     description "Judge implementation-plan convergence"
-    client judge
+    tier medium
     scope {
         read_only ["{{OUT_DIR}}/"]
     }
@@ -187,11 +188,10 @@ agent convergence-judge {
 
 workflow feature-plan-refinement {
     execution_mode document
-    param judge { model "tier:medium" }
     param roster [
-        { id "first"  model "tier:top" }
-        { id "second" model "tier:high" }
-        { id "third"  model "tier:medium" }
+        { id "first"  tier top }
+        { id "second" tier high }
+        { id "third"  tier medium }
     ]
 
     steps [

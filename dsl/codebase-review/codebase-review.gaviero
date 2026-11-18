@@ -45,7 +45,7 @@
 //   gaviero-cli --script $GAVIERO_ROOT/.gaviero/dsl/codebase-review/codebase-review.gaviero \
 //     --profile claude --var OUT_DIR=reviews/claude
 //   gaviero-cli --script $GAVIERO_ROOT/.gaviero/dsl/codebase-review/codebase-review.gaviero \
-//     --profile codex --param reviewer=tier:top --var OUT_DIR=reviews/codex
+//     --profile codex --tier review_module=top --var OUT_DIR=reviews/codex
 
 vars {
     OUT_DIR "reviews/latest"
@@ -255,7 +255,7 @@ prompt synthesize-body #"
 // they arrive through synthesized `.mcp.json`, not `--tools`.
 agent inventory {
     description "Inventory modules in leaf-to-root order"
-    client judge
+    tier medium
     tools ["WebSearch" "WebFetch"]
     scope {
         owned     ["{{OUT_DIR}}/inventory.md"]
@@ -274,7 +274,7 @@ agent inventory {
 
 agent review_module {
     description "Review module {{ITER}} — findings only, no edits"
-    client reviewer
+    tier high
     tools ["WebSearch" "WebFetch"]
     depends_on [inventory]
     scope {
@@ -288,7 +288,7 @@ agent review_module {
 
 agent halt_judge {
     description "Exit the review loop when MODULE_COUNT is covered or inventory STOP"
-    client judge
+    tier medium
     tools ["WebSearch" "WebFetch"]
     scope {
         read_only ["{{OUT_DIR}}/"]
@@ -298,7 +298,7 @@ agent halt_judge {
 
 agent synthesize {
     description "Roll up per-module reviews into one summary"
-    client judge
+    tier medium
     tools ["WebSearch" "WebFetch"]
     // depends_on a loop body agent — post-loop dispatch waits until the
     // loop has finished every iteration, so synthesize sees every
@@ -332,8 +332,6 @@ agent synthesize {
 // No compile/clippy/test verify — this workflow writes markdown only.
 
 workflow codebase_review {
-    param reviewer { model "tier:high" }
-    param judge { model "tier:medium" }
     steps [
         inventory
         loop {
