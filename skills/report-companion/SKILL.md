@@ -50,8 +50,9 @@ this section. If a producer changes its layout, update its profile here too.
   `report-draft.md`. If only `report-draft.md` exists, the run did not
   finish. Say so and stop.
 - **Siblings:**
-  - `report-audit.md` is part of the report: what the final citation check
-    changed and why.
+  - `report-audit.md` is part of the report: the report gate's result, any
+    violations it found, the audit class of every citation, title
+    mismatches and claim counts.
   - `landscape.md`, `journal.md` and `archive.md` may be read **only to
     explain how the exploration ran**. They contain claims that no audit
     checked, so no claim about the topic may come from them.
@@ -135,11 +136,18 @@ this section. If a producer changes its layout, update its profile here too.
     steps the question is from a seed question.
   - *verifier*: the auditor. It runs on a different model family from the
     investigators and checks each claim against the source's own text.
-  - *stop judge*: the agent that ends the loop when the frontier is exhausted
-    or no longer adding verified knowledge. Agreement between agents is not a
-    reason to stop.
-  - *citation check*: the final step. It looks up every reference again and
-    checks it for retraction.
+  - *pass gate*: a script, not a model, that runs after every pass. It folds
+    the audit into the frontier and ends the loop by fixed rules: no
+    questions assigned, the frontier exhausted, two passes in a row adding
+    little, or the core questions answered. Agreement between agents is not
+    a reason to stop.
+  - *report gate*: a script that checks the report draft before it is
+    published. Every citation must point to an audited claim, and unverified
+    claims may appear only under "Unverified leads". It also numbers the
+    references and prints them from the works the verifier looked up.
+  - *ledger*: the run's list of every claim with its audit verdict and the
+    work it was checked against. The report cites it, and the report gate
+    reads it.
   - *snowballing*: following a paper's references (*backward*) or the papers
     that cite it (*forward*).
   - *citation context*: the sentence around a citation in a citing paper.
@@ -160,7 +168,8 @@ this section. If a producer changes its layout, update its profile here too.
 - **Siblings:** the evidence file(s) may be read **only to explain how the
   research ran** (sub-questions, sources opened, indexes used, waves). They
   are the raw research record and contain unchecked material, so no claim
-  about the topic may come from them.
+  about the topic may come from them. The `<same name>.findings.json`
+  sidecar restates the report as data for the research store; ignore it.
 - **Output:** `<report basename>-companion.md` beside the report.
 - **Sections to explain (in order):** the "What changed" box and `[vN]`
   marks if present, Executive summary, Findings, Implementation notes,
