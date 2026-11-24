@@ -1,8 +1,8 @@
 ---
 name: deep-research
-description: Agentic multi-source research (web + every configured scholarly MCP server — arXiv, Semantic Scholar, PubMed, Consensus, …) producing a citation-rich markdown report, including paper full text and citation-graph relationships — the CLI equivalent of ticking claude.ai's Research box. Use for any request to research, investigate, deep-dive, review the literature or state of the art, compare options across many sources, or produce a sourced report — even if the word "research" never appears. Depth tiers quick / standard (default) / deep, tunable with key=value overrides. Reliable invocation is /deep-research [tier:] [key=value ...] <question>.
+description: Agentic multi-source research (web + every configured scholarly MCP server — arXiv, Semantic Scholar, PubMed, Consensus, …) producing a citation-rich markdown report, including paper full text and citation-graph relationships, plus a structured findings sidecar recorded in the academic server's research store — the CLI equivalent of ticking claude.ai's Research box. Use for any request to research, investigate, deep-dive, review the literature or state of the art, compare options across many sources, or produce a sourced report — even if the word "research" never appears. Depth tiers quick / standard (default) / deep, tunable with key=value overrides. Reliable invocation is /deep-research [tier:] [key=value ...] <question>.
 argument-hint: "[quick:|deep:] [subq=N searches=N fetches=N waves=N triangulate=N agents=N hops=N] <research question>"
-allowed-tools: WebSearch, WebFetch, Task, Write, Edit, Read, mcp__context7__*, mcp__claude_ai_Arxiv_org__*, mcp__claude_ai_Semantic_Scholar__*, mcp__claude_ai_PubMed__*, mcp__claude_ai_Consensus__*, mcp__claude_ai_alphaXiv__*
+allowed-tools: WebSearch, WebFetch, Task, Write, Edit, Read, mcp__academic__record_research, mcp__context7__*, mcp__claude_ai_Arxiv_org__*, mcp__claude_ai_Semantic_Scholar__*, mcp__claude_ai_PubMed__*, mcp__claude_ai_Consensus__*, mcp__claude_ai_alphaXiv__*
 ---
 
 # Deep Research
@@ -177,10 +177,14 @@ How to use them:
        have it, and note the version each fact applies to. Return four
        parts, every entry a terse one-liner, with no prose paragraphs and no
        word cap; never drop an entry to save space: (a) findings as claims,
-       each with source URL, publication date and DOI/arXiv ID/PMID when it
-       is a paper; (b) specifics: exact names, versions, APIs, parameters,
-       config keys, commands, limits and figures, each with its source and
-       the section or page when known; (c) every source you opened: URL or
+       each with source URL, publication date, DOI/arXiv ID/PMID when it
+       is a paper, the section or page, and a quote of at most 40 words
+       copied character for character from the opened source that states
+       it ('no quote' when you have none — never rebuild one from memory);
+       (b) specifics: exact names, versions, APIs, parameters,
+       config keys, commands, limits and figures, each with its source,
+       the section or page when known, and the verbatim sentence that
+       contains the figure; (c) every source you opened: URL or
        ID, access date, the index or tool it came from, what it gave (or
        'irrelevant'), and its citation links to other papers you found
        ('cites X', 'replicates Y', 'contradicts Z'); (d) conflicts,
@@ -203,8 +207,9 @@ How to use them:
        synthesising, under `## Wave <w>, sub-question <n>: <question>`.
      - Append your own lookups (any tier, including context7, Consensus
        threads and fetches made while checking a claim) in the same four
-       parts, under `## Orchestrator`, as soon as each one is done, not at
-       the end.
+       parts, with the same verbatim quotes, under `## Orchestrator`, as
+       soon as each one is done, not at the end. The findings sidecar
+       (step 7) takes its quotes from this file only.
      - With `waves>1`, append the gap and conflict list that drives each
        next wave.
    - *`waves>1`*: after each wave, list the gaps, the conflicts, and the
@@ -235,7 +240,8 @@ How to use them:
    report (all tiers) to `research/<kebab-slug>-<YYYY-MM-DD>.md`, creating the
    folder if needed. Every non-obvious claim gets an inline markdown link to its
    source and an evidence label (see Evidence standard). The report header
-   links the evidence file from step 3. Write the report so a planner who
+   links the evidence file from step 3 and the findings sidecar from
+   step 7. Write the report so a planner who
    reads only it (and the evidence file) can build an implementation plan
    without redoing the research.
 
@@ -260,9 +266,53 @@ How to use them:
      it under a closing `## Not carried into the report` section of the
      evidence file with a one-line reason. Nothing may vanish silently.
 
-7. **Reply** in chat with both file paths and a ≤10-line summary of key findings.
-   Keep the evidence labels on the load-bearing claims. Do not paste the full
-   report. Add any usage message a tool asked to have shown, word-for-word.
+7. **Findings sidecar (all tiers).** Once the report is written, write
+   `research/<kebab-slug>-<YYYY-MM-DD>.findings.json` beside it, following
+   the Findings sidecar section below. It restates the report's claims,
+   labels, sources and relations as data. It adds nothing the report does
+   not say and leaves out nothing the report labels.
+
+8. **Record.** If a `record_research` tool is in your tool list (the
+   academic server: `mcp__academic__record_research`), call it with
+   `{"kind": "findings", "path": "<absolute path of the sidecar>"}`. The
+   server reads the file itself, so the path must be absolute. Do not pass
+   `collection` unless the user asked for it: it queues full-text
+   ingestion and spends upstream budget.
+   - **Rejected:** the response lists every lint problem. Fix them all and
+     record again.
+   - **Stored:** `result` is `created`, `revised` (same run id, changed
+     file: a new revision that supersedes the old one) or `unchanged`.
+     `checks` counts PASS / FAIL_MISMATCH / FAIL_NOT_FOUND /
+     WARN_UNVERIFIABLE, and `checks.problems` names each target
+     (`stmt:<n>/evidence[<i>]`, `stmt:<n>/specifics[<k>]`, `src:<n>`).
+   - **FAIL_MISMATCH** (quote not in the cited work's stored text, or the
+     number not in its quote): compare the line with the evidence file and
+     fix a transcription slip. If it already matches, reopen the source at
+     the locator. Replace the quote with the exact passage if the source
+     states the claim; relabel the claim by the Evidence standard if it does
+     not, in the sidecar **and in the report** (the two must agree). Delete
+     the quote only when the passage cannot be retrieved again; the
+     evidence file keeps it.
+   - **FAIL_NOT_FOUND** (an identifier no upstream index knows): check it
+     against the evidence file and fix a typo. An identifier you cannot
+     confirm from a fetched source comes out of the sidecar and the report.
+   - **WARN_UNVERIFIABLE** is expected when the local store holds no text
+     for the work (most sources fetched through other servers or the web),
+     for a table or figure locator, or for a source still resolving
+     (`pending_sources`; a background job checks those later, and
+     `get_research` with `view: "run"` and the run key shows the verdicts).
+     Leave it.
+   - Record again after fixes, at most twice in total.
+   - If no `record_research` tool is available, or the server is
+     unreachable after one retry, keep the sidecar and say in the reply that
+     it was not recorded, with the call to make later.
+
+9. **Reply** in chat with the report, evidence and sidecar paths and a
+   ≤10-line summary of key findings. Keep the evidence labels on the
+   load-bearing claims. Add one line on the record: run key, revision and
+   the check counts, or why it was not recorded, plus any FAIL_* verdicts
+   left. Do not paste the full report. Add any usage message a tool asked to
+   have shown, word-for-word.
 
 ## Report template
 
@@ -272,7 +322,7 @@ substantially shorter than the sources it distills.
 ```markdown
 # <Headline answering the question>
 
-*<YYYY-MM-DD> · depth: <tier> (subq=… searches=… fetches=… waves=… triangulate=… agents=… hops=…) · <n> sources fetched · indexes: <web, arXiv, Semantic Scholar, PubMed, Consensus, … actually used> · evidence: [<slug>-<date>.evidence.md](<slug>-<date>.evidence.md)*
+*<YYYY-MM-DD> · depth: <tier> (subq=… searches=… fetches=… waves=… triangulate=… agents=… hops=…) · <n> sources fetched · indexes: <web, arXiv, Semantic Scholar, PubMed, Consensus, … actually used> · evidence: [<slug>-<date>.evidence.md](<slug>-<date>.evidence.md) · findings: [<slug>-<date>.findings.json](<slug>-<date>.findings.json)*
 
 **Question:** <the research question as asked> · **Scope:** <answers to any
 scope questions, or "no clarification needed">
@@ -339,6 +389,127 @@ Template rules:
 - Dead ends count: if a sub-question came up empty, record that in Open
   questions rather than padding Findings.
 
+## Findings sidecar
+
+The report's claims as data, in academic-mcp's findings-v1 format
+(`schemas/findings-v1.md` and `schemas/findings-v1.schema.json` in the
+academic-mcp repository). Unknown fields are rejected everywhere, and a file
+that breaks any rule is rejected whole.
+
+```json
+{
+ "schema_version": 1,
+ "run": {
+  "id": "<slug>-<YYYY-MM-DD>",
+  "skill": "deep-research",
+  "skill_version": "2026-11-24",
+  "question": "<the research question as asked>",
+  "scope": "<the Scope line of the report>",
+  "params": {"tier": "standard", "subq": 5, "searches": 4, "fetches": 4, "waves": 1,
+             "triangulate": 1, "agents": 5, "hops": 1, "indexes": ["web", "arXiv"]},
+  "model": "<your model id>",
+  "report": "<slug>-<YYYY-MM-DD>.md",
+  "evidence": "<slug>-<YYYY-MM-DD>.evidence.md"
+ },
+ "sources": [
+  {"id": "src:1", "ids": {"doi": "10.…", "arxiv": "…", "url": "https://…"}, "title": "…",
+   "year": 2025, "via": "arxiv", "access": "full_text", "accessed": "YYYY-MM-DD"},
+  {"id": "src:2", "ids": {"doi": "10.…", "pmid": "…"}, "title": "…",
+   "year": 2026, "via": "pubmed", "access": "abstract", "accessed": "YYYY-MM-DD"}
+ ],
+ "claims": [
+  {"id": "stmt:1", "text": "…", "kind": "finding", "section": "<theme heading>",
+   "label": "verified",
+   "evidence": [{"source": "src:1", "direction": "supports", "quote": "…", "locator": "§4.2"}],
+   "specifics": [{"item": "recall@5", "value": 0.94, "source": "src:1",
+                  "quote": "… 0.94 …", "locator": "Table 2"}]}
+ ],
+ "relations": [{"from": "src:2", "to": "src:1", "kind": "replicates"}],
+ "open_questions": ["…"]
+}
+```
+
+- **Run.** `id` is the report's file stem: a-z, 0-9, `.`, `_` and `-`,
+  starting with a letter or digit, at most 128 characters. Recording a
+  changed file with the same id makes a new revision. `params` holds the
+  effective knobs and the indexes used. Add `started_at` / `ended_at`
+  (RFC 3339) only when you know the times. `report` and `evidence` are
+  file names relative to the sidecar.
+- **Sources.** One per `## Sources` entry, with id `src:<its number
+  there>`, plus `src:lead-<n>` for each snippet-only lead that an
+  *unverified* claim cites.
+  - `ids`: every identifier you have (DOI, arXiv, PMID, PMCID, OpenAlex
+    W-id, and the URL for web pages and docs). The server resolves sources
+    by them. A paper found in several indexes is one source with all its
+    ids.
+  - `via`: the index or tool it came from (`web`, `arxiv`,
+    `semantic-scholar`, `pubmed`, `consensus`, `context7`, `academic-mcp`,
+    …).
+  - `access`: `full_text` (paper body read), `fetched` (web page or docs
+    opened), `abstract` (abstract or metadata only) or `snippet` (search
+    result only).
+- **Claims.** One per labelled statement of Findings and Implementation
+  notes, in report order (`stmt:1`, `stmt:2`, …), plus the labelled
+  statements of Open questions & caveats. Unlabelled framing sentences are
+  not claims.
+  - `kind`: `finding` (Findings, and each alternative considered with the
+    evidence against it), `recommendation`, `specific` (a Specifics row),
+    `limitation` (constraints, risks and caveats) or `assumption` (an
+    *assumed* claim).
+  - `text`: one self-contained, checkable statement as the report makes it,
+    without links or label words, 1–2000 characters. The server identifies
+    a claim by its kind and normalised wording, so the same wording in a
+    later run joins the same claim.
+  - `section`: the report heading or theme it sits under. `qualifiers`:
+    the report's hedges and conditions ("in adults", "as of v2.3").
+    `scope` (`population`, `dataset`, `split`, `comparator`, `metric`,
+    `conditions`, `note`): only what the report states.
+  - `label`, from the report's label:
+
+    | Report label | `label` | Requires |
+    |---|---|---|
+    | *verified (≥2 independent sources)* | `verified_multi` | `supports` lines on two or more distinct works (the server recounts) |
+    | *verified* | `verified` | at least one `supports` line |
+    | *single source* | `single_source` | one `supports` line |
+    | *inferred* | `inferred` | `inferred_from` (the `stmt:` ids it follows from, with `reasoning`) and/or evidence |
+    | *assumed* | `assumed` | no `supports` line |
+    | *unverified (snippet only)* | `unverified` | its evidence line has `access: "snippet"` |
+
+    *(abstract only)* is not a label: keep the claim's label and set that
+    evidence line's `access` to `abstract`.
+  - `evidence`: one line per cited source, with `source`, `direction`
+    (`supports`; `disputes` for a source the report cites against the
+    claim; `inconclusive` for a mixed one), `access` only when this line
+    read less of the source than its entry says, `quote`, `locator` and
+    `scope_note`.
+  - `specifics`: one entry per number the claim states, with `item`,
+    `value` (a number or `[low, high]`), `unit`, `condition`, `version`,
+    `source`, a `quote` that contains the number, and `locator`. Write the
+    value as the source does (79 with unit `%`, or 0.79); both match.
+- **Quotes.** Copy them from the evidence file, never from memory, and
+  never paraphrase. At most 400 characters, verbatim, with ` … ` between
+  non-contiguous parts. Never glue two sentences into one quote. Without a
+  verbatim quote in the evidence file, leave `quote` out. For a figure from
+  a table or chart, name it in `locator` (`Table 2`). The report's "<25
+  words per source" rule does not apply here.
+- **Relations.** From the Literature map and the conflicts: `replicates`,
+  `contradicts`, `challenges`, `qualifies`, `supersedes` or `same_as`,
+  between two sources (`src:`) or two claims (`stmt:`). When a conflict
+  was settled in favour of the more recent source, add `supersedes` from
+  the winner. "Cites" is not a relation: leave it out.
+- **Open questions.** Every question in Open questions & caveats and every
+  decision left open, as plain strings.
+- **Lint.** The server rejects the whole file if any of these fails:
+  - `schema_version` is 1;
+  - ids start with `src:` or `stmt:` and are unique;
+  - every evidence or specifics `source`, every `inferred_from` claim and
+    both ends of every relation name an existing id, and no relation
+    points to itself;
+  - quotes are 1–400 characters;
+  - the label rules in the table above hold;
+  - numbers are finite and ranges run low to high;
+  - at most 2000 sources and 2000 claims, and the file is at most 5 MB.
+
 ## Guardrails
 
 - One subagent per sub-question, never per search. Never exceed `agents`
@@ -349,7 +520,8 @@ Template rules:
   to pad the report.
 - Use scholarly servers read-only. Do not create topic watches, Consensus
   collections or library entries. arXiv's local paper cache from
-  `download_paper` is fine.
+  `download_paper` is fine. The one write is step 8: recording this run's
+  own findings sidecar with `record_research`.
 - If a scholarly server is rate-limited, retry once after a short wait,
   then switch to another index and note it in the report.
 - If the question is trivially answerable with one lookup, say so and answer it
