@@ -471,11 +471,6 @@ collections.
 Keep prose tight. The review should be much shorter than the literature it
 distils.
 
-**Shared contract.** `/research-companion` parses this layout: the file
-names, the `*Version v<N> · files:` header line, the section names, and
-the evidence labels and access marks. If you change any of them, update
-the academic-research profile in `research-companion/SKILL.md` too.
-
 ```markdown
 # <Headline answering the question>
 
